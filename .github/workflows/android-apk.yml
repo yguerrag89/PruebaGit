@@ -22,12 +22,16 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
-      - name: Unpack Android project
-        run: unzip -q project.zip
+      - name: Reconstruct Android project
+        run: |
+          cat apkbuild/project.b64.part* | base64 -d > project-clean.zip
+          unzip -t project-clean.zip
+          mkdir android-project
+          unzip -q project-clean.zip -d android-project
       - name: Build debug APK
-        working-directory: Ilubox_Descarga_PDA_Piloto
+        working-directory: android-project
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: Ilubox-Descarga-PDA-v0.1
-          path: Ilubox_Descarga_PDA_Piloto/app/build/outputs/apk/debug/app-debug.apk
+          path: android-project/app/build/outputs/apk/debug/app-debug.apk
