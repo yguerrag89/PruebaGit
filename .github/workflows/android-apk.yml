@@ -24,10 +24,11 @@ jobs:
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
       - name: Reconstruct V0.2 project
         run: |
-          cat v02build/project.b64.part* | base64 -d > project-clean.zip
-          unzip -t project-clean.zip
+          cat v02srczip/part* | base64 -d > project-v02.zip
+          unzip -t project-v02.zip
           mkdir android-project
-          unzip -q project-clean.zip -d android-project
+          unzip -q project-v02.zip -d android-project
+          grep -q "versionName '0.2-piloto'" android-project/app/build.gradle
       - name: Run engine self-test
         run: |
           mkdir -p test-bin
