@@ -22,11 +22,12 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
-      - name: Reconstruct V0.2 from verified V0.1 and overlay
+      - name: Reconstruct V0.1 base and apply V0.2 overlay
         run: |
-          unzip -t project.zip
+          cat apkbuild/project.b64.part* | base64 -d > base-project.zip
+          unzip -t base-project.zip
           mkdir android-project
-          unzip -q project.zip -d android-project
+          unzip -q base-project.zip -d android-project
           cp v02overlay/app/build.gradle android-project/app/build.gradle
           cp v02overlay/app/src/main/AndroidManifest.xml android-project/app/src/main/AndroidManifest.xml
           cp v02overlay/app/src/main/java/com/ilubox/descargapda/core/Position.java android-project/app/src/main/java/com/ilubox/descargapda/core/Position.java
