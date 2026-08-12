@@ -1,4 +1,4 @@
-name: Build Android APK V0.2
+name: Build Android APK V0.2.1 Q9
 
 on:
   push:
@@ -22,13 +22,65 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
-      - name: Reconstruct V0.2 project
+      - name: Reconstruct verified V0.2 project
         run: |
-          cat v02srczip/part* | base64 -d > project-v02.zip
+          cat v02build/project.b64.part* | base64 -d > project-v02.zip
           unzip -t project-v02.zip
           mkdir android-project
           unzip -q project-v02.zip -d android-project
-          grep -q "versionName '0.2-piloto'" android-project/app/build.gradle
+      - name: Apply responsive AUTOID Q9 layout
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java')
+          s=p.read_text()
+          def rep(a,b):
+              global s
+              if a not in s:
+                  raise SystemExit('Responsive patch anchor not found: '+a[:80])
+              s=s.replace(a,b)
+          rep('''    private int dp(int v) {\n        return Math.round(v * getResources().getDisplayMetrics().density);\n    }\n''','''    private int dp(int v) {\n        return Math.round(v * getResources().getDisplayMetrics().density);\n    }\n\n    private boolean compactPda() {\n        android.content.res.Configuration c = getResources().getConfiguration();\n        return c.screenWidthDp <= 360 || c.screenHeightDp <= 640;\n    }\n\n    private int rh(int normalDp, int compactDp) {\n        return dp(compactPda() ? compactDp : normalDp);\n    }\n\n    private float rsp(float normalSp, float compactSp) {\n        return compactPda() ? compactSp : normalSp;\n    }\n''')
+          rep('b.setTextSize(15);','b.setTextSize(rsp(15, 12));')
+          rep('b.setPadding(dp(12), dp(8), dp(12), dp(8));','b.setPadding(dp(compactPda() ? 6 : 12), dp(compactPda() ? 4 : 8), dp(compactPda() ? 6 : 12), dp(compactPda() ? 4 : 8));')
+          rep('r.setPadding(dp(12), dp(10), dp(12), dp(10));','r.setPadding(dp(compactPda() ? 6 : 12), dp(compactPda() ? 5 : 10), dp(compactPda() ? 6 : 12), dp(compactPda() ? 5 : 10));')
+          rep('TextView cont = tv(engine.containerId, 20, Color.WHITE, true);','TextView cont = tv(engine.containerId, rsp(20, 16), Color.WHITE, true);')
+          rep('header.setPadding(dp(12), dp(6), dp(8), dp(6));','header.setPadding(dp(compactPda() ? 8 : 12), dp(compactPda() ? 3 : 6), dp(compactPda() ? 4 : 8), dp(compactPda() ? 3 : 6));')
+          rep('header.addView(cont, new LinearLayout.LayoutParams(0, dp(52), 1f));','header.addView(cont, new LinearLayout.LayoutParams(0, rh(52, 42), 1f));')
+          rep('header.addView(supervisor, new LinearLayout.LayoutParams(dp(126), dp(42)));','header.addView(supervisor, new LinearLayout.LayoutParams(dp(compactPda() ? 102 : 126), rh(42, 36)));')
+          rep('progressText = tv("", 17, C_GRAY, true);','progressText = tv("", rsp(17, 13), C_GRAY, true);')
+          rep('r.addView(progressText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36)));','r.addView(progressText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(36, 26)));')
+          rep('scanInput.setTextSize(18);','scanInput.setTextSize(rsp(18, 15));')
+          rep('r.addView(scanInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));','r.addView(scanInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(54, 44)));')
+          rep('resultBox.setPadding(dp(8), dp(8), dp(8), dp(8));','resultBox.setPadding(dp(compactPda() ? 4 : 8), dp(compactPda() ? 4 : 8), dp(compactPda() ? 4 : 8), dp(compactPda() ? 4 : 8));')
+          rep('positionResult = tv("LISTA", 54, C_BLUE, true);','positionResult = tv("LISTA", rsp(54, 36), C_BLUE, true);')
+          rep('statusResult = tv("ESCANEE UNA CAJA", 19, C_DARK, true);','statusResult = tv("ESCANEE UNA CAJA", rsp(19, 14), C_DARK, true);')
+          rep('codeResult = tv("", 15, C_GRAY, false);','codeResult = tv("", rsp(15, 11), C_GRAY, false);')
+          rep('countResult = tv("", 20, C_DARK, true);','countResult = tv("", rsp(20, 15), C_DARK, true);')
+          rep('r.addView(resultBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(166)));','r.addView(resultBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(166, 112)));')
+          rep('pressureText = tv("", 14, C_GRAY, true);','pressureText = tv("", rsp(14, 11), C_GRAY, true);')
+          rep('r.addView(pressureText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32)));','r.addView(pressureText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(32, 24)));')
+          rep('TextView mapTitle = tv("MAPA DE POSICIONES", 16, C_DARK, true);','TextView mapTitle = tv("MAPA DE POSICIONES", rsp(16, 13), C_DARK, true);')
+          rep('lower.addView(mapTitle, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30)));','lower.addView(mapTitle, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(30, 24)));')
+          rep('TextView recentTitle = tv("ÚLTIMOS 5 EVENTOS", 14, C_DARK, true);','TextView recentTitle = tv("ÚLTIMOS 5 EVENTOS", rsp(14, 12), C_DARK, true);')
+          rep('recentText = tv("", 13, C_GRAY, false);','recentText = tv("", rsp(13, 11), C_GRAY, false);')
+          rep('LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50));','LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(50, 42));')
+          rep('TextView label = tv(c.label, 18, txt, true);','TextView label = tv(c.label, rsp(18, 15), txt, true);')
+          rep('TextView title = tv(c.title, 11, txt, true);','TextView title = tv(c.title, rsp(11, 9), txt, true);')
+          rep('TextView detail = tv(c.detail, 10, C_GRAY, false);','TextView detail = tv(c.detail, rsp(10, 8), C_GRAY, false);')
+          rep('lp.width = Math.max(dp(120), (screenWidth - dp(32)) / 2);','lp.width = Math.max(dp(compactPda() ? 92 : 120), (screenWidth - dp(compactPda() ? 18 : 32)) / 2);')
+          rep('lp.height = dp(72);','lp.height = rh(72, 56);')
+          rep('header.addView(title, new LinearLayout.LayoutParams(0, dp(54), 1f));','header.addView(title, new LinearLayout.LayoutParams(0, rh(54, 44), 1f));')
+          rep('header.addView(op, new LinearLayout.LayoutParams(dp(180), dp(46)));','header.addView(op, new LinearLayout.LayoutParams(dp(compactPda() ? 128 : 180), rh(46, 38)));')
+          rep('r.addView(undoScan, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));','r.addView(undoScan, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(54, 44)));')
+          rep('r.addView(export, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));','r.addView(export, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(54, 44)));')
+          rep('r.addView(newUnload, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));','r.addView(newUnload, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(54, 44)));')
+          p.write_text(s)
+          b=Path('android-project/app/build.gradle')
+          t=b.read_text().replace('versionCode 2','versionCode 3').replace("versionName '0.2-piloto'","versionName '0.2.1-q9-responsive'")
+          b.write_text(t)
+          PY
+          grep -q "0.2.1-q9-responsive" android-project/app/build.gradle
+          grep -q "compactPda" android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
       - name: Run engine self-test
         run: |
           mkdir -p test-bin
@@ -39,5 +91,5 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-Descarga-PDA-v0.2
+          name: Ilubox-Descarga-PDA-v0.2.1-Q9
           path: android-project/app/build/outputs/apk/debug/app-debug.apk
