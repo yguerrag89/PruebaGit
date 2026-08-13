@@ -1,4 +1,4 @@
-name: Build Android APK V0.2.1 Q9
+name: Build Android APK V0.2.2 Q9
 
 on:
   push:
@@ -81,6 +81,12 @@ jobs:
           PY
           grep -q "0.2.1-q9-responsive" android-project/app/build.gradle
           grep -q "compactPda" android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+      - name: Refine compact screens for AUTOID Q9
+        run: |
+          python v022/apply_q9_compact.py android-project
+          grep -q "0.2.2-q9-compact" android-project/app/build.gradle
+          grep -q "dm.widthPixels <= 540" android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q '"IZQ."' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
       - name: Run engine self-test
         run: |
           mkdir -p test-bin
@@ -91,5 +97,5 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-Descarga-PDA-v0.2.1-Q9
+          name: Ilubox-Descarga-PDA-v0.2.2-Q9
           path: android-project/app/build/outputs/apk/debug/app-debug.apk
