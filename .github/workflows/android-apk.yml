@@ -37,7 +37,7 @@ jobs:
       - name: Apply V0.3 Manual Q9 patch
         run: |
           base64 -d v03/v02_to_v03.patch.gz.b64 | gzip -d > /tmp/v03.patch
-          (cd android-project && patch -p2 --batch < /tmp/v03.patch)
+          (cd android-project && patch -p3 --batch < /tmp/v03.patch)
           grep -q "versionName '0.3-manual-q9'" android-project/app/build.gradle
           grep -q 'ENGINE_VERSION = "0.3"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
           grep -q 'scanManual' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
