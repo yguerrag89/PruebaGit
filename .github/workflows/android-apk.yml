@@ -1,8 +1,8 @@
-name: Build Android APK V0.3 Manual Q9
+name: Build Android APK V0.4 Buffer Modular Q9
 
 on:
   push:
-    branches: [ v0-3-manual-q9 ]
+    branches: [ v0-4-buffer-modular-q9 ]
   workflow_dispatch:
 
 jobs:
@@ -39,12 +39,18 @@ jobs:
           base64 -d v03/v02_to_v03.patch.gz.b64 | gzip -d > /tmp/v03.patch
           (cd android-project && patch -p3 --batch < /tmp/v03.patch)
           grep -q "versionName '0.3-manual-q9'" android-project/app/build.gradle
-          grep -q 'ENGINE_VERSION = "0.3"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
-          grep -q 'scanManual' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
-          grep -q 'CÓDIGO EN OTRA TARIMA' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
-          grep -q 'dm.widthPixels <= 540' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
 
-      - name: Run AUTO + MANUAL engine self-tests
+      - name: Apply V0.4 Buffer Modular patch
+        run: |
+          cat v04/part* | base64 -d | gzip -d > /tmp/v04.patch
+          (cd android-project && patch -p4 --batch < /tmp/v04.patch)
+          grep -q "versionName '0.4-buffer-modular-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.4-buffer"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'scanBuffer' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'BUFFER MODULAR' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'B%02d-%c' android-project/app/src/main/java/com/ilubox/descargapda/core/BufferSector.java
+
+      - name: Run AUTO + MANUAL + BUFFER engine self-tests
         run: |
           mkdir -p test-bin
           javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java
@@ -61,5 +67,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-Descarga-PDA-v0.3-Manual-Q9
+          name: Ilubox-Descarga-PDA-v0.4-Buffer-Modular-Q9
           path: android-project/app/build/outputs/apk/debug/app-debug.apk
