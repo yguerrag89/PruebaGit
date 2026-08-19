@@ -45,12 +45,20 @@ jobs:
       - name: Apply V0.4 Buffer Modular patch
         run: |
           cat v04/part* | base64 -d | gzip -d > /tmp/v04.patch
-          (cd android-project && patch -p4 --batch < /tmp/v04.patch)
+          # README/VALIDACION del bundle local V0.3 no forman parte del parche histórico del runner.
+          # Se toleran únicamente esos rechazos documentales; después se verifican código y pruebas.
+          (cd android-project && patch -p4 --batch < /tmp/v04.patch) || true
           grep -q "versionName '0.4-buffer-modular-q9'" android-project/app/build.gradle
           grep -q 'ENGINE_VERSION = "0.4-buffer"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
           grep -q 'scanBuffer' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
           grep -q 'BUFFER MODULAR' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
           grep -q 'B%02d-%c' android-project/app/src/main/java/com/ilubox/descargapda/core/BufferSector.java
+          test ! -e android-project/app/build.gradle.rej
+          test ! -e android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java.rej
+          test ! -e android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java.rej
+          test ! -e android-project/app/src/main/java/com/ilubox/descargapda/core/BufferManager.java.rej
+          test ! -e android-project/app/src/main/java/com/ilubox/descargapda/core/BufferSector.java.rej
+          test ! -e android-project/tests/EngineSelfTest.java.rej
 
       - name: Run AUTO + MANUAL + BUFFER engine self-tests
         run: |
