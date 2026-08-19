@@ -3,6 +3,8 @@ name: Build Android APK V0.4 Buffer Modular Q9
 on:
   push:
     branches: [ v0-4-buffer-modular-q9 ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
