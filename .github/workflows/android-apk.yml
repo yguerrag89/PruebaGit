@@ -1,8 +1,8 @@
-name: Build Android APK V0.4.1 Buffer Responsive Q9
+name: Build Android APK V0.5 Manual Temporal WMS Q9
 
 on:
   push:
-    branches: [ v0-4-buffer-modular-q9 ]
+    branches: [ v0-5-manual-temporal-wms-q9 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -68,11 +68,24 @@ jobs:
           grep -q 'EXPORTAR HISTORIAL CSV' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
           grep -q 'compactPda() ? "OPERADOR"' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
 
+      - name: Apply V0.5 Manual Temporal WMS patch
+        run: |
+          cat v05/part* | base64 -d | gzip -d > /tmp/v05.patch
+          (cd android-project && patch -p1 --batch < /tmp/v05.patch)
+          grep -q "versionName '0.5-manual-temporal-wms-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.5-manual-temporal"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'TEMPORAL DE ESTA TARIMA' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'REPORTE EXCEL · TARIMAS + PACKING' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'writeWmsPutawayXlsx' android-project/app/src/main/java/com/ilubox/descargapda/data/PilotDatabase.java
+          test -f android-project/app/src/main/java/com/ilubox/descargapda/data/SimpleXlsxWriter.java
+
       - name: Run AUTO + MANUAL + BUFFER engine self-tests
         run: |
           mkdir -p test-bin
           javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java
           java -cp test-bin EngineSelfTest
+          mkdir -p xlsx-bin
+          javac -d xlsx-bin android-project/app/src/main/java/com/ilubox/descargapda/data/SimpleXlsxWriter.java
 
       - name: Build debug APK
         working-directory: android-project
@@ -85,5 +98,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-Descarga-PDA-v0.4.1-Buffer-Responsive-Q9
+          name: Ilubox-Descarga-PDA-v0.5-Manual-Temporal-WMS-Q9
           path: android-project/app/build/outputs/apk/debug/app-debug.apk
