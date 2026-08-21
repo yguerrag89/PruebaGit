@@ -70,7 +70,7 @@ jobs:
 
       - name: Apply V0.5 Manual Temporal WMS patch
         run: |
-          cat v05/part0* | tr -cd 'A-Za-z0-9+/=' | base64 -d | gzip -d > /tmp/v05.patch
+          cat v05/fix00 v05/fix01 v05/fix02 v05/part01 v05/part02 | base64 -d | gzip -d > /tmp/v05.patch
           (cd android-project && patch -p1 --batch < /tmp/v05.patch)
           grep -q "versionName '0.5-manual-temporal-wms-q9'" android-project/app/build.gradle
           grep -q 'ENGINE_VERSION = "0.5-manual-temporal"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
