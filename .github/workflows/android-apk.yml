@@ -1,8 +1,8 @@
-name: Build Android APK V0.5 Manual Temporal WMS Q9
+name: Build Android APK V0.6 Traslado Dirigido Q9
 
 on:
   push:
-    branches: [ v0-5-manual-temporal-wms-q9 ]
+    branches: [ v0-6-traslado-dirigido-q9 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -79,7 +79,17 @@ jobs:
           grep -q 'writeWmsPutawayXlsx' android-project/app/src/main/java/com/ilubox/descargapda/data/PilotDatabase.java
           test -f android-project/app/src/main/java/com/ilubox/descargapda/data/SimpleXlsxWriter.java
 
-      - name: Run AUTO + MANUAL + BUFFER engine self-tests
+      - name: Apply V0.6 Traslado Dirigido patch
+        run: |
+          cat v06/part* | base64 -d | gzip -d > /tmp/v06.patch
+          (cd android-project && patch -p1 --batch < /tmp/v06.patch)
+          grep -q "versionName '0.6-traslado-dirigido-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.6-traslado-dirigido"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'scanTransfer' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'CAMBIAR TARIMA DE TRASLADO' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'MARCAR Y TRASLADAR' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+
+      - name: Run AUTO + MANUAL + BUFFER + TRASLADO engine self-tests
         run: |
           mkdir -p test-bin
           javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java
@@ -98,5 +108,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-Descarga-PDA-v0.5-Manual-Temporal-WMS-Q9
+          name: Ilubox-Descarga-PDA-v0.6-Traslado-Dirigido-Q9
           path: android-project/app/build/outputs/apk/debug/app-debug.apk
