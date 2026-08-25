@@ -1,8 +1,8 @@
-name: Build Android APK V0.6 Traslado Dirigido Q9
+name: Build Android APK V0.7 Supervisor Simple Q9
 
 on:
   push:
-    branches: [ v0-6-traslado-dirigido-q9 ]
+    branches: [ v0-7-supervisor-simple-q9 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -89,6 +89,16 @@ jobs:
           grep -q 'CAMBIAR TARIMA DE TRASLADO' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
           grep -q 'MARCAR Y TRASLADAR' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
 
+      - name: Apply V0.7 Supervisor Simple patch
+        run: |
+          cat v07/part* | base64 -d | gzip -d > /tmp/v07.patch
+          (cd android-project && patch -p1 --batch < /tmp/v07.patch)
+          grep -q "versionName '0.7-supervisor-simple-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.7-supervisor-simple"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'showSimpleTransferSupervisor' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'CONFIRMAR DISTRIBUCIÓN' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'sendCurrentTransfer' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+
       - name: Run AUTO + MANUAL + BUFFER + TRASLADO engine self-tests
         run: |
           mkdir -p test-bin
@@ -108,5 +118,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-Descarga-PDA-v0.6-Traslado-Dirigido-Q9
+          name: Ilubox-Descarga-PDA-v0.7-Supervisor-Simple-Q9
           path: android-project/app/build/outputs/apk/debug/app-debug.apk
