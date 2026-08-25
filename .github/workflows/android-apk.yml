@@ -1,7 +1,9 @@
-name: Build Android APK
+name: Build Android APK V0.7 Supervisor Simple Q9
 
 on:
   push:
+    branches: [ v0-7-supervisor-simple-q9 ]
+  pull_request:
     branches: [ main ]
   workflow_dispatch:
 
@@ -10,28 +12,111 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+
       - name: Prepare Android SDK 36
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
-      - name: Reconstruct Android project
+
+      - name: Reconstruct verified V0.2 base
         run: |
-          cat apkbuild/project.b64.part* | base64 -d > project-clean.zip
-          unzip -t project-clean.zip
+          cat v02build/project.b64.part* | base64 -d > project-v02.zip
+          unzip -t project-v02.zip
           mkdir android-project
-          unzip -q project-clean.zip -d android-project
+          unzip -q project-v02.zip -d android-project
+          grep -q "versionName '0.2-piloto'" android-project/app/build.gradle
+
+      - name: Apply V0.3 Manual Q9 patch
+        run: |
+          base64 -d v03/v02_to_v03.patch.gz.b64 | gzip -d > /tmp/v03.patch
+          (cd android-project && patch -p3 --batch < /tmp/v03.patch)
+          grep -q "versionName '0.3-manual-q9'" android-project/app/build.gradle
+
+      - name: Apply V0.4 Buffer Modular patch
+        run: |
+          cat v04/part* | base64 -d | gzip -d > /tmp/v04.patch
+          (cd android-project && patch -p4 --batch < /tmp/v04.patch) || true
+          grep -q "versionName '0.4-buffer-modular-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.4-buffer"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'scanBuffer' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'BUFFER MODULAR' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'B%02d-%c' android-project/app/src/main/java/com/ilubox/descargapda/core/BufferSector.java
+          test ! -e android-project/app/build.gradle.rej
+          test ! -e android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java.rej
+          test ! -e android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java.rej
+          test ! -e android-project/app/src/main/java/com/ilubox/descargapda/core/BufferManager.java.rej
+          test ! -e android-project/app/src/main/java/com/ilubox/descargapda/core/BufferSector.java.rej
+          test ! -e android-project/tests/EngineSelfTest.java.rej
+
+      - name: Apply V0.4.1 responsive supervisor patch
+        run: |
+          base64 -d v041/responsive.patch.gz.b64 | gzip -d > /tmp/v041.patch
+          (cd android-project && patch -p1 --batch < /tmp/v041.patch)
+          grep -q "versionName '0.4.1-buffer-responsive-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.4.1-buffer"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'pageScroll.setFillViewport(true)' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'EXPORTAR HISTORIAL CSV' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'compactPda() ? "OPERADOR"' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+
+      - name: Apply V0.5 Manual Temporal WMS patch
+        run: |
+          cat v05/fix00 v05/fix01 v05/fix02 v05/part01 v05/part02 | base64 -d | gzip -d > /tmp/v05.patch
+          (cd android-project && patch -p1 --batch < /tmp/v05.patch)
+          grep -q "versionName '0.5-manual-temporal-wms-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.5-manual-temporal"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'TEMPORAL DE ESTA TARIMA' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'REPORTE EXCEL · TARIMAS + PACKING' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'writeWmsPutawayXlsx' android-project/app/src/main/java/com/ilubox/descargapda/data/PilotDatabase.java
+          test -f android-project/app/src/main/java/com/ilubox/descargapda/data/SimpleXlsxWriter.java
+
+      - name: Apply V0.6 Traslado Dirigido patch
+        run: |
+          cat v06/part* | base64 -d | gzip -d > /tmp/v06.patch
+          (cd android-project && patch -p1 --batch < /tmp/v06.patch)
+          grep -q "versionName '0.6-traslado-dirigido-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.6-traslado-dirigido"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'scanTransfer' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'CAMBIAR TARIMA DE TRASLADO' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'MARCAR Y TRASLADAR' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+
+      - name: Apply V0.7 Supervisor Simple patch
+        run: |
+          cat v07/part* | base64 -d | gzip -d > /tmp/v07.patch
+          (cd android-project && patch -p1 --batch < /tmp/v07.patch)
+          grep -q "versionName '0.7-supervisor-simple-q9'" android-project/app/build.gradle
+          grep -q 'ENGINE_VERSION = "0.7-supervisor-simple"' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+          grep -q 'showSimpleTransferSupervisor' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'CONFIRMAR DISTRIBUCIÓN' android-project/app/src/main/java/com/ilubox/descargapda/MainActivity.java
+          grep -q 'sendCurrentTransfer' android-project/app/src/main/java/com/ilubox/descargapda/core/UnloadEngine.java
+
+      - name: Run AUTO + MANUAL + BUFFER + TRASLADO engine self-tests
+        run: |
+          mkdir -p test-bin
+          javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java
+          java -cp test-bin EngineSelfTest
+          mkdir -p xlsx-bin
+          javac -d xlsx-bin android-project/app/src/main/java/com/ilubox/descargapda/data/SimpleXlsxWriter.java
+
       - name: Build debug APK
         working-directory: android-project
         run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify APK
+        run: |
+          unzip -t android-project/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum android-project/app/build/outputs/apk/debug/app-debug.apk
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-Descarga-PDA-v0.1
+          name: Ilubox-Descarga-PDA-v0.7-Supervisor-Simple-Q9
           path: android-project/app/build/outputs/apk/debug/app-debug.apk
