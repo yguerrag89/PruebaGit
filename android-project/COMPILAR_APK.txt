@@ -1,0 +1,12 @@
+COMPILAR APK EN WINDOWS CON ANDROID STUDIO
+
+1. Instala/abre Android Studio.
+2. File > Open.
+3. Selecciona la carpeta Ilubox_Descarga_PDA_Piloto.
+4. Espera a que termine Gradle Sync y a que Android Studio instale el SDK que solicite.
+5. Build > Build App Bundle(s) / APK(s) > Build APK(s).
+6. Pulsa "locate" cuando Android Studio termine.
+7. El archivo esperado es app-debug.apk.
+8. Copia app-debug.apk a la PDA e instálalo permitiendo instalación desde esa fuente si Android lo solicita.
+
+Para un piloto interno se usa el APK debug. Para despliegue final se deberá crear una firma release estable.

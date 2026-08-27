@@ -1,0 +1,8 @@
+**/__pycache__/
+*.py[cod]
+windows-project/data/sessions/*.json
+android-project/.gradle/
+android-project/.idea/
+android-project/**/build/
+release/
+deliverables/

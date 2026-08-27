@@ -1,0 +1,3 @@
+Ilubox WMS PDA
+Versión: 0.8-wms-strict-q9
+Contrato de resultado: ilubox.pda.result.v1
