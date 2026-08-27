@@ -54,6 +54,7 @@ jobs:
 
       - name: Package deliverables
         run: |
+          find release -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
           mkdir -p release
           cp android-project/app/build/outputs/apk/debug/app-debug.apk release/Ilubox_WMS_PDA_v0.9_Q9.apk
           (cd windows-project && zip -qr ../release/Ilubox_WMS_Windows_v0.9.zip . \
