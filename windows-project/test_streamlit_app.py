@@ -38,8 +38,8 @@ app.session_state.wms_configs = {}
 app.run()
 assert not app.exception, app.exception
 assert [tab.label for tab in app.tabs] == [
-    "Resumen", "Plan de tarimas", "Seguimiento", "Plantilla WMS"
+    "Resumen", "Plan de tarimas", "Seguimiento", "Exportación WMS"
 ]
-assert any("Preparar plantilla oficial" in item.value for item in app.subheader)
+assert any("Generar archivo exclusivo" in item.value for item in app.subheader)
 
-print("OK Streamlit: operador, supervisor y pestaña Plantilla WMS")
+print("OK Streamlit V0.9: preparación física y exportación WMS exclusiva")

@@ -5,7 +5,7 @@ import streamlit as st
 
 from core.bundles import unpack_upload
 from core.parser import parse_xlsx_bytes
-from core.optimizer import Settings, build_static_plan, plan_summary
+from core.optimizer import Settings, build_static_plan, plan_summary, transfer_layout_summary
 from core.live import LiveUnload
 from core.exporters import rows_to_csv
 from core.storage import (
@@ -28,7 +28,7 @@ APP_DIR = Path(__file__).resolve().parent
 OFFICIAL_TEMPLATE = APP_DIR / "assets" / "templates" / "Plantilla_oficial_WMS_PutawayCrossDockImport.xlsx"
 
 
-st.set_page_config(page_title="Ilubox WMS Windows V0.8", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Ilubox WMS Windows V0.9", page_icon="📦", layout="wide")
 
 st.markdown(
     """
@@ -354,7 +354,7 @@ if mode == "👷 Operador":
 # MODO SUPERVISOR
 # ==========================
 else:
-    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.8")
+    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.9")
     st.caption(
         "La aplicación organiza la descarga, conserva el avance localmente y prepara una copia validada "
         "de la plantilla oficial. No se conecta ni ejecuta movimientos dentro del WMS."
@@ -408,8 +408,8 @@ else:
     pallets = build_static_plan(records, st.session_state.settings)
     summary = plan_summary(records, pallets, st.session_state.settings)
 
-    st.subheader("2. Preparar posiciones físicas")
-    st.caption("I01/D01 son las más cercanas al contenedor. I/D se definen mirando desde el andén hacia el interior del contenedor. Habilita solo el espacio que realmente esté disponible.")
+    st.subheader("2. Preparación física inicial")
+    st.caption("I01/D01 son espacios para definitivas dinámicas al pie del contenedor. El tendido final se calcula por separado y la TR-01 cuenta como una tarima adicional.")
     st.download_button(
         "📱 Descargar archivo para PDA (.json)",
         android_manifest_json(container, st.session_state.settings),
@@ -420,9 +420,22 @@ else:
     )
     k = container_key(container).replace("|", "_")
     p1, p2, p3 = st.columns([1, 1, 1.2])
-    initial_left = p1.number_input("Lado izquierdo", min_value=0, max_value=10, value=5, step=1, key=f"left_{k}")
-    initial_right = p2.number_input("Lado derecho", min_value=0, max_value=10, value=5, step=1, key=f"right_{k}")
-    p3.metric("Total inicial", f"{int(initial_left) + int(initial_right)} / 20")
+    initial_left = p1.number_input("Directas al pie · izquierda", min_value=0, max_value=10, value=3, step=1, key=f"left_{k}")
+    initial_right = p2.number_input("Directas al pie · derecha", min_value=0, max_value=10, value=3, step=1, key=f"right_{k}")
+    foot_slots = int(initial_left) + int(initial_right)
+    layout = transfer_layout_summary(records, st.session_state.settings, foot_slots)
+    p3.metric("Espacios directos al pie", f"{foot_slots} / 20")
+
+    l1, l2, l3, l4 = st.columns(4)
+    l1.metric("Tendido final · colocar ahora", layout["tendido_final"])
+    l2.metric("Definitivas al pie · colocar ahora", layout["foot_direct_initial"])
+    l3.metric("Traslado al pie", "1 · TR-01")
+    l4.metric("Total físico inicial", layout["physical_initial_total"])
+    st.info(
+        f"Durante toda la descarga se estiman {layout['final_total_estimated']} tarimas definitivas: "
+        f"{layout['tendido_final']} en el tendido y {layout['direct_final_estimated']} directas. "
+        f"Las posiciones al pie se reutilizarán para {layout['direct_replacements']} reemplazo(s)."
+    )
 
     a1, a2 = st.columns([2, 1])
     with a1:
@@ -458,7 +471,7 @@ else:
         st.warning(warning)
 
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["Resumen", "Plan de tarimas", "Seguimiento", "Plantilla WMS"]
+        ["Resumen", "Plan de tarimas", "Seguimiento", "Exportación WMS"]
     )
 
     with tab1:
@@ -577,11 +590,11 @@ else:
         config = get_wms_config(container)
         result_key = container_key(container)
 
-        st.subheader("4. Preparar plantilla oficial de almacenamiento")
+        st.subheader("4. Generar archivo exclusivo para WMS")
         st.info(
-            "Aquí se genera el archivo para **Importación inteligente**. La aplicación no carga el "
-            "archivo ni confirma movimientos dentro del WMS. I01/D01 son posiciones físicas; la "
-            "ubicación WMS se captura por separado."
+            "Este XLSX contiene exclusivamente las cuatro columnas oficiales de **Importación inteligente**. "
+            "El reporte de descarga, el historial y el JSON de la PDA son archivos separados. "
+            "I01/D01 son posiciones físicas; la ubicación WMS se captura por tarima."
         )
 
         st.markdown("#### Resultado de la PDA")
@@ -614,9 +627,9 @@ else:
                 st.success(f"Resultado PDA validado: {len(parsed_result.events)} cajas únicas.")
 
         pda_result = st.session_state.pda_results.get(result_key)
-        source_events = live.history
-        source_received = local_received
-        source_label = "Escaneo local Windows"
+        source_events = []
+        source_received = 0
+        source_label = "Resultado PDA V0.9 pendiente"
         if pda_result and pda_result.ready:
             src1, src2 = st.columns([3, 1])
             src1.success(
@@ -626,15 +639,22 @@ else:
             if src2.button("Quitar resultado PDA", key=f"remove_pda_{k}", width="stretch"):
                 st.session_state.pda_results.pop(result_key, None)
                 st.rerun()
-            source_label = st.radio(
-                "Fuente para la plantilla WMS",
-                ["Resultado validado de PDA", "Escaneo local Windows"],
-                horizontal=True,
-                key=f"wms_source_{k}",
+            source_label = "Resultado validado de PDA"
+            source_events = pda_result.events
+            source_received = len(source_events)
+            eligible = len(pda_result.eligible_events)
+            if eligible == source_received:
+                st.success(f"Estado físico y validación: {eligible}/{source_received} cajas elegibles para WMS.")
+            else:
+                st.warning(
+                    f"Aún no puede generarse el WMS: {eligible}/{source_received} cajas están en definitiva "
+                    "y pertenecen a una tarima validada."
+                )
+        else:
+            st.warning(
+                "Importa un resultado PDA V0.9. El escaneo local de Windows permanece disponible para pruebas "
+                "y auditoría, pero no sustituye la confirmación física de traslado y tarima."
             )
-            if source_label == "Resultado validado de PDA":
-                source_events = pda_result.events
-                source_received = len(source_events)
 
         st.caption(f"Fuente activa: **{source_label}** · {source_received}/{expected} cajas")
 
@@ -728,6 +748,7 @@ else:
             received=source_received,
             expected=expected,
             allow_partial=partial_ack,
+            require_final_validation=True,
         )
 
         for warning in build_result.warnings:

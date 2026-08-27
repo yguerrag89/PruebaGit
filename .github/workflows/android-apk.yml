@@ -1,8 +1,8 @@
-name: Build Ilubox WMS V0.8 Windows and PDA
+name: Build Ilubox WMS V0.9 Windows and PDA
 
 on:
   push:
-    branches: [ v0-8-wms-strict-q9 ]
+    branches: [ v0-9-dynamic-wms-q9 ]
   workflow_dispatch:
 
 permissions:
@@ -55,24 +55,24 @@ jobs:
       - name: Package deliverables
         run: |
           mkdir -p release
-          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/Ilubox_WMS_PDA_v0.8_Q9.apk
-          (cd windows-project && zip -qr ../release/Ilubox_WMS_Windows_v0.8.zip . \
+          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/Ilubox_WMS_PDA_v0.9_Q9.apk
+          (cd windows-project && zip -qr ../release/Ilubox_WMS_Windows_v0.9.zip . \
             -x '*/__pycache__/*' '*.pyc' 'data/sessions/*.json')
-          unzip -t release/Ilubox_WMS_PDA_v0.8_Q9.apk
-          unzip -t release/Ilubox_WMS_Windows_v0.8.zip
-          (cd release && sha256sum Ilubox_WMS_PDA_v0.8_Q9.apk Ilubox_WMS_Windows_v0.8.zip > SHA256SUMS.txt)
+          unzip -t release/Ilubox_WMS_PDA_v0.9_Q9.apk
+          unzip -t release/Ilubox_WMS_Windows_v0.9.zip
+          (cd release && sha256sum Ilubox_WMS_PDA_v0.9_Q9.apk Ilubox_WMS_Windows_v0.9.zip > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-WMS-v0.8-Windows-y-PDA
+          name: Ilubox-WMS-v0.9-Windows-y-PDA
           path: release/
 
       - name: Publish compiled files on the branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f release/Ilubox_WMS_PDA_v0.8_Q9.apk release/Ilubox_WMS_Windows_v0.8.zip release/SHA256SUMS.txt
+          git add -f release/Ilubox_WMS_PDA_v0.9_Q9.apk release/Ilubox_WMS_Windows_v0.9.zip release/SHA256SUMS.txt
           if ! git diff --cached --quiet; then
-            git commit -m "CI: agrega instalables V0.8 [skip ci]"
+            git commit -m "CI: agrega instalables V0.9 [skip ci]"
             git push
           fi

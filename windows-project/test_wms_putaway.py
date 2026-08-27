@@ -24,6 +24,9 @@ def accepted(scan, code, pallet="I01-01", position="I01"):
         "Posición": position,
         "Tarima": pallet,
         "Estado": "OK",
+        "Estado físico": "EN_DEFINITIVA",
+        "Tarima validada": True,
+        "Elegible WMS": True,
         "Caja individual": True,
     }
 
@@ -109,6 +112,9 @@ base_event = [{
     "Posición": "I01",
     "Tarima": "I01-01",
     "Estado": "OK",
+    "Estado físico": "EN_DEFINITIVA",
+    "Tarima validada": True,
+    "Elegible WMS": True,
     "Caja individual": False,
 }]
 base_result = build_putaway_rows(
@@ -141,10 +147,18 @@ assert not duplicate_scan["ok"] and duplicate_scan["status"] == "DUPLICADA"
 out_of_range = live.scan("MJ260561713U007")
 assert not out_of_range["ok"] and out_of_range["status"] == "FUERA DE RANGO"
 
+# 8) Una caja en traslado o en tarima no validada nunca entra al archivo WMS.
+not_final = accepted("MJ260510161U014", "MJ260510161")
+not_final.update({"Estado físico": "EN_TRASLADO", "Tarima validada": False, "Elegible WMS": False})
+blocked_state = build_putaway_rows(
+    [not_final], records, "PAS3902608080RT", default_location="1-1-01"
+)
+assert not blocked_state.ready and any("no es elegible" in message.lower() for message in blocked_state.errors)
+
 restored = LiveUnload.from_state(
     [records["MJ260561713"]], settings, live.to_state()
 )
 assert restored.history == live.history
 assert restored.scanned_unique_barcodes == live.scanned_unique_barcodes
 
-print("OK WMS putaway: exportación oficial, validaciones y persistencia")
+print("OK WMS putaway V0.9: archivo exclusivo, estado físico y validación estricta")

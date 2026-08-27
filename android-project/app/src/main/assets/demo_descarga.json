@@ -5,6 +5,7 @@
   "source_file": "demo",
   "record_signature": "38fd8f400177e64054f7a5176fe0b87c4238d2f376961e309e01b80310152080",
   "strict_individual_barcodes": true,
+  "individual_sequence": {"prefix":"U","start":1,"consecutive":true,"padding":3},
   "settings": {
     "physical_capacity": 2.16,
     "target_capacity": 1.94,

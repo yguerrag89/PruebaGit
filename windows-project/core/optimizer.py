@@ -182,3 +182,49 @@ def plan_summary(records, pallets, settings):
         "tarimas_mixtas": sum(1 for p in pallets if p.pallet_type == "Mixta"),
         "tarimas_unitarios": sum(1 for p in pallets if p.pallet_type == "Unitarios"),
     }
+
+
+def transfer_layout_summary(records: list[CodeRecord], settings: Settings, foot_positions: int = 6):
+    """Replica el plan físico V0.9 usado por la PDA.
+
+    Los códigos grandes reservan posiciones dinámicas al pie; sus Uxxx no se
+    preasignan a una tarima. Los demás códigos se empacan secuencialmente en el
+    tendido final para conocer cuántas tarimas deben colocarse antes de iniciar.
+    """
+    direct_codes = []
+    estimated_direct_pallets = 0
+    tendido_pallets = 0
+    used = 0.0
+    target = max(float(settings.target_capacity), 1e-9)
+
+    for record in records:
+        is_direct = record.cbm >= target * settings.large_ratio
+        unit = max(float(record.cbm_per_box), 0.0)
+        if is_direct:
+            direct_codes.append(record.code)
+            capacity = max(1, floor(target / max(unit, 1e-9)))
+            estimated_direct_pallets += max(1, ceil(record.boxes / capacity))
+            continue
+
+        for _ in range(record.boxes):
+            if used > 1e-9 and used + unit > target + 1e-9:
+                tendido_pallets += 1
+                used = 0.0
+            elif used <= 1e-9:
+                # Abrir una nueva tarima al colocar la primera caja planificada.
+                tendido_pallets += 1
+            used += unit
+
+    foot_positions = max(0, min(20, int(foot_positions)))
+    initial_direct = min(len(direct_codes), foot_positions)
+    return {
+        "direct_codes": len(direct_codes),
+        "direct_final_estimated": estimated_direct_pallets,
+        "tendido_final": tendido_pallets,
+        "foot_direct_initial": initial_direct,
+        "foot_transfer_initial": 1,
+        "foot_total_initial": initial_direct + 1,
+        "physical_initial_total": tendido_pallets + initial_direct + 1,
+        "final_total_estimated": tendido_pallets + estimated_direct_pallets,
+        "direct_replacements": max(0, estimated_direct_pallets - initial_direct),
+    }

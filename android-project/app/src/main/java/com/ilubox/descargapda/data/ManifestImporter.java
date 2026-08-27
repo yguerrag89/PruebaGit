@@ -40,10 +40,16 @@ public class ManifestImporter {
     public static ManifestData parse(InputStream in) throws Exception {
         JSONObject root = new JSONObject(readAll(in));
         if (!"ilubox.pda.manifest.v2".equals(root.optString("schema", ""))) {
-            throw new IllegalArgumentException("Use el archivo PDA generado por Windows V0.8");
+            throw new IllegalArgumentException("Use el archivo PDA generado por Windows V0.9");
         }
         if (root.optInt("version", 0) != 2 || !root.optBoolean("strict_individual_barcodes", false)) {
             throw new IllegalArgumentException("El manifiesto no exige códigos individuales; genere uno nuevo en Windows");
+        }
+        JSONObject sequence = root.optJSONObject("individual_sequence");
+        if (sequence == null || !"U".equalsIgnoreCase(sequence.optString("prefix", ""))
+                || sequence.optInt("start", 0) != 1 || !sequence.optBoolean("consecutive", false)
+                || sequence.optInt("padding", 0) != 3) {
+            throw new IllegalArgumentException("La lista debe definir U001…UN consecutivos comenzando en 1");
         }
         ManifestData out = new ManifestData();
         out.containerId = UnloadEngine.canonicalScan(root.optString("container_id", ""));

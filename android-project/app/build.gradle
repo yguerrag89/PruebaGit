@@ -10,8 +10,8 @@ android {
         applicationId 'com.ilubox.descargapda'
         minSdk 23
         targetSdk 36
-        versionCode 10
-        versionName '0.8-wms-strict-q9'
+        versionCode 11
+        versionName '0.9-dynamic-wms-q9'
     }
 
     buildTypes {

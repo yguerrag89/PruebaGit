@@ -10,7 +10,8 @@ from .strict_scan import canonical_scan, parse_strict_scan, record_signature
 
 
 PDA_MANIFEST_SCHEMA = "ilubox.pda.manifest.v2"
-PDA_RESULT_SCHEMA = "ilubox.pda.result.v1"
+PDA_RESULT_SCHEMA = "ilubox.pda.result.v2"
+LEGACY_PDA_RESULT_SCHEMA = "ilubox.pda.result.v1"
 
 
 @dataclass
@@ -21,6 +22,11 @@ class PdaImportResult:
     warnings: list[str] = field(default_factory=list)
     exported_at: str = ""
     engine_version: str = ""
+    schema_version: int = 0
+
+    @property
+    def eligible_events(self) -> list[dict]:
+        return [event for event in self.events if event.get("Elegible WMS") is True]
 
     @property
     def ready(self) -> bool:
@@ -37,6 +43,7 @@ def build_pda_manifest(container, settings) -> bytes:
         "source_sheet": getattr(container, "sheet", ""),
         "record_signature": record_signature(records_by_code),
         "strict_individual_barcodes": True,
+        "individual_sequence": {"prefix": "U", "start": 1, "consecutive": True, "padding": 3},
         "settings": {
             "physical_capacity": settings.physical_capacity,
             "target_capacity": settings.target_capacity,
@@ -79,8 +86,22 @@ def parse_pda_result(
     if not isinstance(payload, dict):
         result.errors.append("El resultado PDA debe contener un objeto JSON.")
         return result
-    if payload.get("schema") != PDA_RESULT_SCHEMA:
+    supplied_schema = payload.get("schema")
+    is_v2 = supplied_schema == PDA_RESULT_SCHEMA and payload.get("version") == 2
+    is_legacy = supplied_schema == LEGACY_PDA_RESULT_SCHEMA and payload.get("version", 1) == 1
+    if not is_v2 and not is_legacy:
         result.errors.append("El archivo no es un resultado PDA compatible con esta versión.")
+    result.schema_version = 2 if is_v2 else (1 if is_legacy else 0)
+
+    if is_v2:
+        sequence = payload.get("individual_sequence")
+        if not isinstance(sequence, dict) or not (
+            str(sequence.get("prefix", "")).upper() == "U"
+            and sequence.get("start") == 1
+            and sequence.get("consecutive") is True
+            and sequence.get("padding") == 3
+        ):
+            result.errors.append("El resultado PDA no confirma la secuencia U001…UN consecutiva.")
 
     result.container_id = canonical_scan(payload.get("container_id", ""))
     expected_id = canonical_scan(expected_container_id)
@@ -101,6 +122,25 @@ def parse_pda_result(
     if not isinstance(raw_events, list):
         result.errors.append("El resultado PDA no contiene la lista de cajas aceptadas.")
         return result
+
+    pallet_payload = payload.get("pallets", []) if is_v2 else []
+    pallet_states: dict[str, dict] = {}
+    if is_v2:
+        if not isinstance(pallet_payload, list):
+            result.errors.append("El resultado PDA no contiene un resumen válido de tarimas.")
+            pallet_payload = []
+        for pallet_index, pallet_item in enumerate(pallet_payload, start=1):
+            if not isinstance(pallet_item, dict):
+                result.errors.append(f"Tarima PDA {pallet_index}: formato inválido.")
+                continue
+            pallet_id = canonical_scan(pallet_item.get("id", ""))
+            if not pallet_id or not re.fullmatch(r"T-\d{2,4}", pallet_id):
+                result.errors.append(f"Tarima PDA {pallet_index}: identificador inválido.")
+                continue
+            if pallet_id in pallet_states:
+                result.errors.append(f"Tarima PDA {pallet_index}: {pallet_id} está duplicada.")
+                continue
+            pallet_states[pallet_id] = pallet_item
 
     seen: set[str] = set()
     code_counts: dict[str, int] = {}
@@ -148,6 +188,49 @@ def parse_pda_result(
         if transfer and not re.fullmatch(r"TR-\d{2,4}", transfer):
             result.errors.append(f"Registro PDA {index}: la tarima de traslado tiene un formato inválido.")
             continue
+        direct = item.get("direct_to_final") is True
+        physical_position = canonical_scan(item.get("physical_position", ""))
+        physical_state = "SIN_CONFIRMACION_V08"
+        pallet_validated = False
+        eligible = False
+        transfer_distributed = False
+        if is_v2:
+            physical_state = canonical_scan(item.get("physical_state", ""))
+            if physical_state not in {"EN_TRASLADO", "EN_DEFINITIVA"}:
+                result.errors.append(f"Registro PDA {index}: estado físico inválido.")
+                continue
+            transfer_distributed = item.get("transfer_distributed") is True
+            pallet_validated = item.get("final_pallet_validated") is True
+            declared_eligible = item.get("wms_eligible") is True
+            calculated_eligible = physical_state == "EN_DEFINITIVA" and pallet_validated
+            if declared_eligible != calculated_eligible:
+                result.errors.append(f"Registro PDA {index}: elegibilidad WMS inconsistente.")
+                continue
+            eligible = calculated_eligible
+            if direct and transfer:
+                result.errors.append(f"Registro PDA {index}: una caja directa no puede pertenecer a {transfer}.")
+                continue
+            if not direct and not transfer:
+                result.errors.append(f"Registro PDA {index}: falta la tarima de traslado.")
+                continue
+            if not direct and physical_state == "EN_DEFINITIVA" and not transfer_distributed:
+                result.errors.append(f"Registro PDA {index}: {transfer} no fue confirmada como distribuida.")
+                continue
+            pallet_summary = pallet_states.get(pallet)
+            if pallet_summary is None:
+                result.errors.append(f"Registro PDA {index}: {pallet} no aparece en el resumen de tarimas.")
+                continue
+            if (pallet_summary.get("validated") is True) != pallet_validated:
+                result.errors.append(f"Registro PDA {index}: validación de {pallet} inconsistente.")
+                continue
+            expected_formation = "PIE" if direct else "TENDIDO"
+            if canonical_scan(pallet_summary.get("formation", "")) != expected_formation:
+                result.errors.append(f"Registro PDA {index}: formación de {pallet} inconsistente.")
+                continue
+            summary_position = canonical_scan(pallet_summary.get("physical_position", ""))
+            if summary_position != physical_position:
+                result.errors.append(f"Registro PDA {index}: posición física de {pallet} inconsistente.")
+                continue
         code_counts[parsed.code] = code_counts.get(parsed.code, 0) + 1
         result.events.append({
             "N": len(result.events) + 1,
@@ -162,6 +245,12 @@ def parse_pda_result(
             "Esperadas": int(getattr(canonical_records[parsed.code], "boxes", 0)),
             "Tarima": pallet,
             "Tarima traslado": transfer,
+            "Formación": "PIE" if direct else "TENDIDO",
+            "Posición física": physical_position,
+            "Estado físico": physical_state,
+            "Traslado distribuido": transfer_distributed,
+            "Tarima validada": pallet_validated,
+            "Elegible WMS": eligible,
             "Caja individual": True,
         })
 
@@ -172,6 +261,15 @@ def parse_pda_result(
         )
     if not result.events:
         result.errors.append("El resultado PDA no contiene cajas válidas aceptadas.")
+    elif is_legacy:
+        result.warnings.append(
+            "Resultado V0.8 importado para auditoría: no contiene confirmación física ni validación de tarimas, "
+            "por lo que sus cajas no son elegibles para WMS."
+        )
+    elif len(result.eligible_events) < len(result.events):
+        result.warnings.append(
+            f"Estado operativo: {len(result.eligible_events)} de {len(result.events)} cajas cumplen todos los requisitos WMS."
+        )
 
     result.exported_at = str(payload.get("exported_at", ""))
     result.engine_version = str(payload.get("engine_version", ""))
@@ -180,13 +278,41 @@ def parse_pda_result(
 
 def demo_pda_result(container_id: str, records_by_code: Mapping[str, object], events: list[dict]) -> bytes:
     """Ayudante determinista para pruebas de integración."""
+    normalized_events = []
+    pallets: dict[str, dict] = {}
+    for source in events:
+        item = dict(source)
+        direct = item.get("direct_to_final") is True
+        item.setdefault("physical_position", "I01" if direct else "")
+        item.setdefault("transfer_distributed", True)
+        item.setdefault("physical_state", "EN_DEFINITIVA")
+        item.setdefault("final_pallet_validated", True)
+        item.setdefault("wms_eligible", True)
+        normalized_events.append(item)
+        pallet_id = canonical_scan(item.get("final_pallet", ""))
+        bucket = pallets.setdefault(pallet_id, {
+            "id": pallet_id,
+            "formation": "PIE" if direct else "TENDIDO",
+            "physical_position": canonical_scan(item.get("physical_position", "")),
+            "status": "VALIDADA" if item.get("final_pallet_validated") else "EN FORMACIÓN",
+            "expected": 0,
+            "scanned": 0,
+            "in_final": 0,
+            "validated": item.get("final_pallet_validated") is True,
+        })
+        bucket["expected"] += 1
+        bucket["scanned"] += 1
+        if item.get("physical_state") == "EN_DEFINITIVA":
+            bucket["in_final"] += 1
     payload = {
         "schema": PDA_RESULT_SCHEMA,
-        "version": 1,
+        "version": 2,
         "container_id": canonical_scan(container_id),
         "record_signature": record_signature(records_by_code),
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "engine_version": "test",
-        "accepted_events": events,
+        "individual_sequence": {"prefix": "U", "start": 1, "consecutive": True, "padding": 3},
+        "pallets": list(pallets.values()),
+        "accepted_events": normalized_events,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")

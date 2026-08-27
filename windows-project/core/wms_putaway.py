@@ -130,6 +130,7 @@ def build_putaway_rows(
     received: int | None = None,
     expected: int | None = None,
     allow_partial: bool = False,
+    require_final_validation: bool = True,
 ) -> WmsBuildResult:
     """Construye filas estrictas de caja individual para la plantilla oficial.
 
@@ -172,6 +173,16 @@ def build_putaway_rows(
         base_code = _canonical_identifier(event.get("Código", ""))
         pallet_id = pallet_id_for_event(event)
         physical_position = _normalized_text(event.get("Posición", ""))
+
+        if require_final_validation and event.get("Elegible WMS") is not True:
+            physical_state = _normalized_text(event.get("Estado físico", "SIN CONFIRMACIÓN"))
+            validated = event.get("Tarima validada") is True
+            result.errors.append(
+                f"Caja {sequence}: {barcode or 'sin código'} no es elegible para WMS "
+                f"(estado {physical_state or 'SIN CONFIRMACIÓN'}, "
+                f"tarima {'validada' if validated else 'no validada'})."
+            )
+            continue
 
         if not barcode:
             result.errors.append(f"Caja {sequence}: el escaneo está vacío.")

@@ -95,7 +95,7 @@ public class MainActivity extends Activity {
     private int setupLeft = 2;
     private int setupRight = 2;
     private int setupBufferPallets = 4;
-    /** V0.8 prioriza traslado dirigido; MANUAL/BUFFER se conservan para comparación. */
+    /** V0.9 prioriza traslado dirigido; MANUAL/BUFFER se conservan para comparación. */
     private String setupMode = "TRASLADO";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -232,7 +232,7 @@ public class MainActivity extends Activity {
         title.setSingleLine(true);
         r.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(60, 38)));
 
-        TextView sub = tv("V0.8 · WMS + escaneo individual estricto", rsp(18, 13), C_GRAY, true);
+        TextView sub = tv("V0.9 · tarima dinámica + WMS estricto", rsp(18, 13), C_GRAY, true);
         sub.setGravity(Gravity.CENTER);
         r.addView(sub, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(34, 24)));
         r.addView(spacer(compactPda() ? 8 : 24));
@@ -304,16 +304,12 @@ public class MainActivity extends Activity {
     private int recommendedDefinitivePositions(ManifestImporter.ManifestData m) {
         if (m == null || m.records == null) return 4;
         double target = m.settings == null ? 1.94 : m.settings.targetCapacity;
-        int multi = 0, units = 0;
+        int directCodes = 0;
         for (com.ilubox.descargapda.core.CodeRecord c : m.records) {
-            if (c.boxes == 1) units++;
-            if (c.cbm > target) multi++;
+            if (c.cbm >= target * (m.settings == null ? 0.70 : m.settings.largeRatio)) directCodes++;
         }
-        int suggestion = 3;
-        if (multi >= 5) suggestion++;
-        if (multi >= 12) suggestion++;
-        if (units >= 40) suggestion = Math.max(suggestion, 4);
-        return Math.max(2, Math.min(6, suggestion));
+        if (directCodes <= 0) return 0;
+        return Math.min(6, directCodes);
     }
 
     private void applyRecommendedBufferPlan() {
@@ -335,6 +331,26 @@ public class MainActivity extends Activity {
         return "PLAN SUGERIDO · " + setupBufferPallets + " buffer × 4 sectores · "
                 + (setupLeft + setupRight) + " definitivas\n"
                 + nonUnit + " códigos a buffer · " + units + " unitarios directos · " + multi + " códigos >1 tarima";
+    }
+
+    private UnloadEngine pendingTransferPlanner() {
+        if (pendingManifest == null) return null;
+        return new UnloadEngine(pendingManifest.containerId, pendingManifest.records, pendingManifest.settings,
+                setupLeft, setupRight, "TRASLADO", setupBufferPallets);
+    }
+
+    private String transferPlanSummary() {
+        UnloadEngine plan = pendingTransferPlanner();
+        if (plan == null) return "";
+        int footDefinitive = plan.initialDirectFootPalletCount();
+        int footTotal = footDefinitive + 1; // una TR-xx activa
+        int replacements = Math.max(0, plan.estimatedDirectFinalPallets - footDefinitive);
+        return "PREPARACIÓN FÍSICA INICIAL\n"
+                + "Tendido final: " + plan.plannedTendidoPalletCount() + " tarimas\n"
+                + "Al pie: " + footDefinitive + " definitivas + 1 traslado = " + footTotal + "\n"
+                + "Total a tender ahora: " + plan.initialPhysicalPalletCount() + " tarimas\n"
+                + "Estimado de toda la descarga: " + plan.plannedFinalPalletCount() + " definitivas"
+                + (replacements > 0 ? " · " + replacements + " reemplazos al pie" : "");
     }
 
     private void showSetup() {
@@ -384,7 +400,18 @@ public class MainActivity extends Activity {
             r.addView(spacer(compactPda() ? 6 : 10));
         }
 
-        TextView definitiveLabel = tv("POSICIONES DEFINITIVAS INICIALES", rsp(14, 11), C_DARK, true);
+        if ("TRASLADO".equals(setupMode)) {
+            TextView plan = tv(transferPlanSummary(), rsp(15, 11), C_DARK, true);
+            plan.setTag("transferPlan");
+            plan.setPadding(dp(9), dp(7), dp(9), dp(7));
+            plan.setBackground(box(C_LIGHT_GREEN, C_GREEN, 10));
+            r.addView(plan);
+            r.addView(spacer(compactPda() ? 7 : 12));
+        }
+
+        TextView definitiveLabel = tv("TRASLADO".equals(setupMode)
+                ? "DEFINITIVAS EN BLANCO AL PIE" : "POSICIONES DEFINITIVAS INICIALES",
+                rsp(14, 11), C_DARK, true);
         definitiveLabel.setGravity(Gravity.CENTER);
         r.addView(definitiveLabel);
         r.addView(spacer(4));
@@ -399,8 +426,9 @@ public class MainActivity extends Activity {
         r.addView(spacer(compactPda() ? 9 : 22));
         Button start = button("▶  INICIAR DESCARGA", C_GREEN, Color.WHITE);
         start.setOnClickListener(v -> {
-            if (setupLeft + setupRight <= 0) {
-                Toast.makeText(this, "Habilita al menos una posición", Toast.LENGTH_SHORT).show();
+            UnloadEngine preview = "TRASLADO".equals(setupMode) ? pendingTransferPlanner() : null;
+            if (setupLeft + setupRight <= 0 && (preview == null || preview.directCodeCount() > 0)) {
+                Toast.makeText(this, "Habilita al menos una posición para las definitivas directas", Toast.LENGTH_SHORT).show();
                 return;
             }
             engine = new UnloadEngine(pendingManifest.containerId, pendingManifest.records, pendingManifest.settings,
@@ -411,7 +439,9 @@ public class MainActivity extends Activity {
                 db.insertSystemEvent("INICIO", "", "Descarga iniciada · modo=" + setupMode
                         + " · I=" + setupLeft + " D=" + setupRight
                         + ("BUFFER".equals(setupMode) ? " · Buffer=" + setupBufferPallets + "×4 sectores" : "")
-                        + ("TRASLADO".equals(setupMode) ? " · Plan=" + engine.plannedFinalPalletCount() + " tarimas" : ""));
+                        + ("TRASLADO".equals(setupMode) ? " · Plan=" + engine.plannedFinalPalletCount()
+                                + " definitivas · tendido=" + engine.plannedTendidoPalletCount()
+                                + " · pie=" + engine.initialDirectFootPalletCount() + "+TR" : ""));
                 pendingManifest = null;
                 showOperator();
             } catch (Exception e) {
@@ -531,9 +561,11 @@ public class MainActivity extends Activity {
         TextView l = findTagged(root, "setupLeft");
         TextView d = findTagged(root, "setupRight");
         TextView b = findTagged(root, "setupBuffer");
+        TextView p = findTagged(root, "transferPlan");
         if (l != null) l.setText(String.valueOf(setupLeft));
         if (d != null) d.setText(String.valueOf(setupRight));
         if (b != null) b.setText(String.valueOf(setupBufferPallets));
+        if (p != null) p.setText(transferPlanSummary());
     }
 
     private TextView findTagged(View root, String tag) {
@@ -803,7 +835,8 @@ public class MainActivity extends Activity {
         LinearLayout resultBox = (LinearLayout) findTaggedView(findViewById(android.R.id.content), "resultBox");
         int fill, border, main;
         if (x.ok) {
-            if ("TARIMA COMPLETA".equals(x.status) || "DIRECTO A DEFINITIVA".equals(x.status)) {
+            if ("TARIMA COMPLETA".equals(x.status) || "DIRECTO A DEFINITIVA".equals(x.status)
+                    || "TARIMA LISTA".equals(x.status)) {
                 fill = C_LIGHT_GREEN; border = C_GREEN; main = C_GREEN;
                 tones.startTone(ToneGenerator.TONE_PROP_ACK, 130);
                 vibrateOk();
@@ -1419,7 +1452,7 @@ public class MainActivity extends Activity {
         refreshMap();
     }
 
-    /** V0.8: tablero simple y resultado compatible con el generador WMS de Windows. */
+    /** V0.9: tablero simple, plan físico inicial y resultado con estado WMS. */
     private void showSimpleTransferSupervisor() {
         if (engine == null) { showHome(); return; }
         inSupervisor = true;
@@ -1445,7 +1478,7 @@ public class MainActivity extends Activity {
         int[] pg = engine.progress();
         List<UnloadEngine.FinalPalletView> views = engine.finalPalletViews();
         int active = 0;
-        for (UnloadEngine.FinalPalletView v : views) if (v.received > 0) active++;
+        for (UnloadEngine.FinalPalletView v : views) if (v.received > 0 && !v.validated) active++;
 
         TextView container = tv(engine.containerId, rsp(20, 16), C_DARK, true);
         container.setGravity(Gravity.CENTER);
@@ -1460,6 +1493,14 @@ public class MainActivity extends Activity {
         metrics.addView(simpleMetric("INCIDENCIAS", String.valueOf(engine.transferIncidentCount),
                 engine.transferIncidentCount > 0 ? C_ORANGE : C_GRAY));
         r.addView(metrics);
+        TextView plan = tv("PLAN INICIAL · tendido " + engine.plannedTendidoPalletCount()
+                + " · pie " + engine.initialDirectFootPalletCount() + " + 1 TR"
+                + " · total físico " + engine.initialPhysicalPalletCount()
+                + "\nWMS elegibles: " + engine.wmsEligibleBoxCount() + " de " + engine.acceptedBoxCount() + " escaneadas",
+                rsp(13, 10), C_GRAY, true);
+        plan.setGravity(Gravity.CENTER);
+        plan.setPadding(dp(5), dp(4), dp(5), dp(4));
+        r.addView(plan);
         r.addView(spacer(10));
 
         addFinalPalletSection(r, "AL PIE DEL CONTENEDOR", true, views);
@@ -1532,17 +1573,22 @@ public class MainActivity extends Activity {
         parent.addView(heading, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(28, 23)));
         int shown = 0;
         for (UnloadEngine.FinalPalletView v : views) {
-            if (v.direct != direct || v.received <= 0) continue;
+            if (v.direct != direct || v.scanned <= 0) continue;
             shown++;
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(9), dp(4), dp(9), dp(4));
-            int border = "LISTA".equals(v.status) ? C_GREEN : C_BLUE;
+            int border = ("LISTA".equals(v.status) || "VALIDADA".equals(v.status)) ? C_GREEN
+                    : ("EN TRASLADO".equals(v.status) ? C_ORANGE : C_BLUE);
             row.setBackground(box(Color.WHITE, border, 9));
-            TextView id = tv(v.label, rsp(20, 15), border, true);
-            row.addView(id, new LinearLayout.LayoutParams(dp(68), rh(46, 38)));
-            TextView progress = tv(v.received + "/" + v.expected, rsp(17, 13), C_DARK, true);
+            String shownId = v.label + (v.physicalPosition == null || v.physicalPosition.isEmpty()
+                    ? "" : " · " + v.physicalPosition);
+            TextView id = tv(shownId, rsp(18, 13), border, true);
+            row.addView(id, new LinearLayout.LayoutParams(dp(v.direct ? 116 : 72), rh(46, 38)));
+            String progressValue = "EN TRASLADO".equals(v.status)
+                    ? (v.scanned + " esc.") : (v.received + "/" + v.expected);
+            TextView progress = tv(progressValue, rsp(17, 13), C_DARK, true);
             progress.setGravity(Gravity.CENTER);
             row.addView(progress, new LinearLayout.LayoutParams(0, rh(46, 38), 1f));
             TextView state = tv(v.status, rsp(13, 10), border, true);
@@ -1572,12 +1618,17 @@ public class MainActivity extends Activity {
     }
 
     private void showFinalPalletDetail(String label) {
-        UnloadEngine.FinalPalletView selected = null;
-        for (UnloadEngine.FinalPalletView v : engine.finalPalletViews()) if (v.label.equals(label)) selected = v;
-        if (selected == null) return;
+        UnloadEngine.FinalPalletView found = null;
+        for (UnloadEngine.FinalPalletView v : engine.finalPalletViews()) if (v.label.equals(label)) found = v;
+        if (found == null) return;
+        final UnloadEngine.FinalPalletView selected = found;
         StringBuilder msg = new StringBuilder();
         msg.append(selected.direct ? "Formación: al pie del contenedor" : "Formación: tendido final");
-        msg.append("\nCajas: ").append(selected.received).append(" / ").append(selected.expected);
+        if (selected.direct && selected.physicalPosition != null && !selected.physicalPosition.isEmpty()) {
+            msg.append(" · ").append(selected.physicalPosition);
+        }
+        msg.append("\nEscaneadas: ").append(selected.scanned);
+        msg.append("\nEn definitiva: ").append(selected.received).append(" / ").append(selected.expected);
         msg.append("\nCódigos: ").append(selected.codeCount);
         msg.append("\nEstado: ").append(selected.status).append("\n\nDESGLOSE\n");
         LinkedHashMap<String, int[]> byCode = new LinkedHashMap<>();
@@ -1592,10 +1643,29 @@ public class MainActivity extends Activity {
             if (engine.scannedUniqueBarcodes.containsKey(barcode)) n[0]++;
         }
         for (Map.Entry<String, int[]> e : byCode.entrySet()) {
+            if (selected.direct) e.getValue()[1] = selected.expected;
             msg.append(e.getKey()).append(" · ").append(e.getValue()[0]).append("/").append(e.getValue()[1]).append("\n");
         }
-        new AlertDialog.Builder(this).setTitle(label).setMessage(msg.toString().trim())
-                .setPositiveButton("Cerrar", null).show();
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle(label).setMessage(msg.toString().trim())
+                .setNegativeButton("Cerrar", null);
+        if (selected.direct && "EN FORMACIÓN".equals(selected.status)) {
+            dialog.setPositiveButton("TARIMA LLENA", (d, w) -> {
+                ActionResult a = engine.closeDirectPalletEarly(selected.label);
+                if (a.ok) {
+                    db.insertSystemEvent("TARIMA DIRECTA CERRADA", selected.label, a.message);
+                    saveQuietly(); showSimpleTransferSupervisor();
+                } else Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
+            });
+        } else if ("LISTA".equals(selected.status)) {
+            dialog.setPositiveButton(selected.direct ? "VALIDAR Y LIBERAR" : "VALIDAR TARIMA", (d, w) -> {
+                ActionResult a = engine.validateFinalPallet(selected.label);
+                if (a.ok) {
+                    db.insertSystemEvent("TARIMA VALIDADA", selected.label, a.message);
+                    saveQuietly(); showSimpleTransferSupervisor();
+                } else Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
+            });
+        }
+        dialog.show();
     }
 
     private void confirmTransferAction() {

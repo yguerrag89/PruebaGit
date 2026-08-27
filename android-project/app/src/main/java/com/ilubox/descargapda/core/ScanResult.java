@@ -21,6 +21,8 @@ public class ScanResult {
     public String firstScanTime = "";
     /** Tarima definitiva calculada, por ejemplo T-07. */
     public String finalPallet = "";
+    /** Posición física al pie, por ejemplo I01. Para tendido se muestra TENDIDO. */
+    public String physicalPosition = "";
     /** Tarima usada para el viaje agrupado, por ejemplo TR-02. Vacía cuando va directo. */
     public String transferPallet = "";
     /** Verdadero cuando el código grande se forma directamente al pie del contenedor. */

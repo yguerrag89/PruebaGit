@@ -7,7 +7,7 @@ public class EngineSelfTest {
     }
 
     public static void main(String[] args) {
-        ok("0.8-wms-strict".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
+        ok("0.9-dynamic-wms".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
         Settings s = new Settings();
         List<CodeRecord> records = Arrays.asList(
             new CodeRecord("BIG", 5, 2.5, 0.5, null, "", ""),
@@ -176,20 +176,42 @@ public class EngineSelfTest {
         ok(formed.ok && b.findPosition(formed.position).waitingRemoval, "definitiva formada y lista para retirar");
         ok(b.bufferFreeSectors() > 0, "formar definitiva libera sectores buffer");
 
-        // V0.6 TRASLADO DIRIGIDO: destino definitivo estable, grandes directos y pequeños agrupados.
+        // V0.9 TRASLADO DIRIGIDO: Uxxx consecutivo, directas dinámicas y estado WMS estricto.
         List<CodeRecord> transferRecords = Arrays.asList(
             new CodeRecord("GRANDE", 4, 1.60, 0.40, 30.0, "", ""),
+            new CodeRecord("GRANDE2", 2, 1.50, 0.75, 30.0, "", ""),
             new CodeRecord("CHICO", 3, 0.30, 0.10, 5.0, "", "")
         );
-        UnloadEngine t = new UnloadEngine("TRASLADO", transferRecords, s, 2, 2, "TRASLADO");
+        UnloadEngine t = new UnloadEngine("TRASLADO", transferRecords, s, 1, 0, "TRASLADO");
         ok(t.isTransferMode(), "modo traslado dirigido");
-        ok(t.plannedFinalPalletCount() >= 2, "planifica tarimas definitivas");
-        ScanResult tg = t.scanTransfer("GRANDEU001");
+        ok(t.plannedTendidoPalletCount() == 1, "planifica una tarima de tendido");
+        ok(t.initialDirectFootPalletCount() == 1, "respeta una sola posición al pie");
+        ok(t.initialPhysicalPalletCount() == 3, "tendido + directa al pie + TR-01");
+
+        // El orden de llegada no altera la tarima: U004 puede llegar antes que U001.
+        ScanResult tg = t.scanTransfer("GRANDEU004");
         ok(tg.ok && tg.directToFinal && tg.position.startsWith("T-"), "grande directo a definitiva");
+        ok("I01".equals(tg.physicalPosition), "grande muestra posición física al pie");
         ok(tg.transferPallet.isEmpty(), "grande no usa traslado");
+        ScanResult tg1 = t.scanTransfer("GRANDEU001");
+        ok(tg1.ok && tg1.position.equals(tg.position), "Uxxx aleatorios permanecen en tarima activa");
+
+        ScanResult noFoot = t.scanTransfer("GRANDE2U001");
+        ok(!noFoot.ok && "SIN POSICIÓN AL PIE".equals(noFoot.status), "límite físico al pie");
+
+        ActionResult closedDirect = t.closeDirectPalletEarly(tg.position);
+        ok(closedDirect.ok, "cierre físico anticipado de directa");
+        ActionResult validatedDirect = t.validateFinalPallet(tg.position);
+        ok(validatedDirect.ok && t.validatedFinalPallets.contains(tg.position), "directa validada");
+        ok(t.isBoxWmsEligible("GRANDEU004"), "directa validada elegible WMS");
+        ScanResult g2 = t.scanTransfer("GRANDE2U001");
+        ok(g2.ok && "I01".equals(g2.physicalPosition), "posición liberada se reutiliza");
+
         ScanResult tc = t.scanTransfer("CHICOU001");
         ok(tc.ok && !tc.directToFinal && tc.position.startsWith("T-"), "chico tiene destino final");
         ok("TR-01".equals(tc.transferPallet), "chico usa traslado activo");
+        ok("EN_TRASLADO".equals(t.boxPhysicalState("CHICOU001")), "chico aún no está en definitiva");
+        ok(!t.isBoxWmsEligible("CHICOU001"), "traslado sin distribuir no llega al WMS");
         ok(t.currentTransferBoxCount() == 1 && t.currentTransferDestinations().size() == 1,
                 "resumen del traslado activo");
         ActionResult sent = t.sendCurrentTransfer();
@@ -199,11 +221,23 @@ public class EngineSelfTest {
                 "bloquea nuevos escaneos mientras se distribuye");
         ActionResult distributed = t.confirmCurrentTransferDistribution();
         ok(distributed.ok && "TR-02".equals(t.currentTransferPallet()), "confirma y avanza traslado");
+        ok("EN_DEFINITIVA".equals(t.boxPhysicalState("CHICOU001")), "distribución confirma llegada física");
+        ok(!t.isBoxWmsEligible("CHICOU001"), "tarima aún necesita validación");
         ScanResult tc2 = t.scanTransfer("CHICOU002");
         ok("TR-02".equals(tc2.transferPallet), "nuevo escaneo usa siguiente traslado");
         ScanResult td = t.scanTransfer("CHICOU002");
         ok(!td.ok && "DUPLICADA".equals(td.status) && td.position.equals(tc2.position),
                 "duplicado conserva destino definitivo");
+        // Completar el destino de tendido, distribuir y validar habilita WMS.
+        ScanResult tc3 = t.scanTransfer("CHICOU003");
+        ok(tc3.ok, "tercera caja chica");
+        ok(t.sendCurrentTransfer().ok, "envía TR-02");
+        ok(t.confirmCurrentTransferDistribution().ok, "distribuye TR-02");
+        ActionResult validateTendido = t.validateFinalPallet(tc.position);
+        ok(validateTendido.ok && t.isBoxWmsEligible("CHICOU001")
+                && t.isBoxWmsEligible("CHICOU002") && t.isBoxWmsEligible("CHICOU003"),
+                "tendido validado habilita sus cajas para WMS");
+
         boolean sawDirect = false, sawTendido = false;
         for (UnloadEngine.FinalPalletView v : t.finalPalletViews()) {
             if (v.direct && v.received > 0) sawDirect = true;
@@ -211,6 +245,6 @@ public class EngineSelfTest {
         }
         ok(sawDirect && sawTendido, "tablero separa al pie y tendido final");
 
-        System.out.println("OK Android core V0.8 WMS + escaneo individual estricto + traslado tests");
+        System.out.println("OK Android core V0.9 dinámica + U001-UN + estados WMS estrictos");
     }
 }

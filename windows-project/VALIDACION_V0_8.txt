@@ -1,4 +1,4 @@
-ILUBOX WMS WINDOWS V0.8 — MATRIZ DE VALIDACIÓN
+ILUBOX WMS WINDOWS V0.9 — MATRIZ DE VALIDACIÓN
 
 Automatizado:
 - ciclo de 20 posiciones y recuperación de sesión;
@@ -13,6 +13,10 @@ Automatizado:
 - cantidad WMS siempre entera 1;
 - bloqueo de fórmulas, ubicación faltante y carga parcial no confirmada;
 - prueba de interfaz Streamlit sin excepciones.
+- plan físico separado: tendido final, directas al pie y TR-01;
+- archivo WMS exclusivo separado del reporte operativo;
+- bloqueo de cajas en traslado o tarimas no validadas;
+- conteo de incidencias únicas además de intentos rechazados.
 
 Antes de usar en producción:
 - comparar la orden Putaway con XLWMS;
