@@ -1,0 +1,4 @@
+Ilubox WMS Windows
+Versión: 0.9
+Manifiesto PDA: ilubox.pda.manifest.v2
+Resultado PDA: ilubox.pda.result.v2

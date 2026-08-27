@@ -1,0 +1,36 @@
+ILUBOX WMS PDA V0.9 — MATRIZ DE VALIDACIÓN
+
+Automatizado:
+- motor AUTO, MANUAL, BUFFER y TRASLADO compila con Java 17;
+- TRASLADO es el modo predeterminado después de importar;
+- código base multi-caja se rechaza como LECTURA INCOMPLETA;
+- Uxxx separado del código se rechaza;
+- unitario base se normaliza a U001;
+- duplicado no incrementa el conteo;
+- Uxxx fuera del rango del Packing List se bloquea;
+- corrección devuelve la caja a pendiente;
+- códigos grandes van a definitiva directa T-xx;
+- códigos grandes se asignan dinámicamente a una tarima/posición activa, sin depender del orden Uxxx;
+- códigos pequeños conservan T-xx y TR-xx;
+- durante una distribución se bloquean nuevos escaneos;
+- U001…UN se valida con inicio en 1 y rango exacto del Packing List;
+- una definitiva se puede cerrar, validar y liberar al pie;
+- el estado de cada caja distingue EN_TRASLADO de EN_DEFINITIVA;
+- resultado V0.9 declara elegibilidad individual para WMS;
+- el APK se abre y verifica como archivo ZIP válido.
+
+Contrato Windows–PDA:
+- manifiesto requerido: ilubox.pda.manifest.v2;
+- strict_individual_barcodes debe ser true;
+- huella SHA-256 del catálogo validada al importar;
+- resultado: ilubox.pda.result.v2;
+- exportación contiene solo cajas aceptadas y vigentes;
+- una caja anulada no se exporta.
+
+Pendiente de prueba física:
+- instalación en la AUTOID Q9 real;
+- lector HID con sufijo Enter;
+- lectura bajo iluminación y distancia reales;
+- volumen, vibración y ergonomía con guantes;
+- transferencia de archivos usada por el personal;
+- prueba controlada con 3–5 cajas antes de una descarga completa.

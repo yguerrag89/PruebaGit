@@ -1,0 +1,27 @@
+{
+  "schema": "ilubox.pda.manifest.v2",
+  "version": 2,
+  "container_id": "DEMO001",
+  "source_file": "demo",
+  "record_signature": "38fd8f400177e64054f7a5176fe0b87c4238d2f376961e309e01b80310152080",
+  "strict_individual_barcodes": true,
+  "individual_sequence": {"prefix":"U","start":1,"consecutive":true,"padding":3},
+  "settings": {
+    "physical_capacity": 2.16,
+    "target_capacity": 1.94,
+    "large_ratio": 0.70,
+    "medium_high_ratio": 0.45,
+    "medium_ratio": 0.25,
+    "max_codes_unit": 20,
+    "max_codes_small": 4,
+    "max_codes_medium": 3,
+    "max_codes_medium_high": 2
+  },
+  "records": [
+    {"code":"BIG","boxes":5,"cbm":2.5,"cbm_per_box":0.5,"description":"Código grande de prueba"},
+    {"code":"SMALL","boxes":2,"cbm":0.2,"cbm_per_box":0.1,"description":"Código pequeño de prueba"},
+    {"code":"UNITA","boxes":1,"cbm":0.05,"cbm_per_box":0.05,"description":"Unitario de prueba"},
+    {"code":"MIXA","boxes":3,"cbm":0.30,"cbm_per_box":0.10,"description":"Mixto A"},
+    {"code":"MIXB","boxes":4,"cbm":0.40,"cbm_per_box":0.10,"description":"Mixto B"}
+  ]
+}

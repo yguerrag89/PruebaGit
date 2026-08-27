@@ -1,0 +1,26 @@
+ILUBOX WMS WINDOWS V0.9 — MATRIZ DE VALIDACIÓN
+
+Automatizado:
+- ciclo de 20 posiciones y recuperación de sesión;
+- validación individual Uxxx y normalización segura U2 -> U002;
+- rechazo del código base para grupos multi-caja;
+- bloqueo de duplicados y fuera de rango;
+- manifiesto PDA V2 con huella SHA-256;
+- importación de resultado PDA con validación de contenedor y Packing List;
+- rechazo de eventos duplicados o inconsistentes;
+- asignación de ubicación WMS por tarima definitiva;
+- generación desde la plantilla oficial sin alterar encabezados;
+- cantidad WMS siempre entera 1;
+- bloqueo de fórmulas, ubicación faltante y carga parcial no confirmada;
+- prueba de interfaz Streamlit sin excepciones.
+- plan físico separado: tendido final, directas al pie y TR-01;
+- archivo WMS exclusivo separado del reporte operativo;
+- bloqueo de cajas en traslado o tarimas no validadas;
+- conteo de incidencias únicas además de intentos rechazados.
+
+Antes de usar en producción:
+- comparar la orden Putaway con XLWMS;
+- probar primero 3–5 cajas en una ubicación controlada;
+- ejecutar Comenzar a analizar y revisar cada error del WMS;
+- no confirmar el movimiento si hay diferencias;
+- conservar el resultado PDA y el XLSX final como evidencia.

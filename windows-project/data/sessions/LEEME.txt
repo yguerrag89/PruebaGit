@@ -1,0 +1,3 @@
+Esta carpeta conserva automáticamente el avance de las descargas.
+
+No edite sus archivos durante una operación y no copie sesiones de un contenedor a otro.

@@ -1,0 +1,345 @@
+--- app/src/main/java/com/ilubox/descargapda/MainActivity.java
++++ app/src/main/java/com/ilubox/descargapda/MainActivity.java
+@@ -10,6 +10,9 @@
+ import android.media.ToneGenerator;
+ import android.net.Uri;
+ import android.os.Bundle;
++import android.os.Build;
++import android.os.VibrationEffect;
++import android.os.Vibrator;
+ import android.provider.Settings;
+ import android.view.Gravity;
+ import android.view.KeyEvent;
+@@ -64,6 +67,7 @@
+     private UnloadEngine engine;
+     private ManifestImporter.ManifestData pendingManifest;
+     private ToneGenerator tones;
++    private Vibrator vibrator;
+     private String lastPosition = "";
+     private boolean inSupervisor = false;
+ 
+@@ -87,6 +91,7 @@
+         db = new PilotDatabase(this);
+         engine = db.loadEngine();
+         tones = new ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90);
++        vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+         if (engine == null) showHome(); else showOperator();
+     }
+ 
+@@ -96,6 +101,38 @@
+         super.onDestroy();
+     }
+ 
++    @Override protected void onResume() {
++        super.onResume();
++        focusScanner();
++    }
++
++    @Override public void onWindowFocusChanged(boolean hasFocus) {
++        super.onWindowFocusChanged(hasFocus);
++        if (hasFocus) focusScanner();
++    }
++
++    private void focusScanner() {
++        if (inSupervisor || scanInput == null) return;
++        scanInput.postDelayed(() -> {
++            if (scanInput != null && !inSupervisor) {
++                scanInput.requestFocus();
++                scanInput.setSelection(scanInput.getText().length());
++            }
++        }, 60);
++    }
++
++    private void vibrateOk() { vibratePattern(new long[]{0, 45}); }
++    private void vibrateDuplicate() { vibratePattern(new long[]{0, 120, 70, 120}); }
++    private void vibrateError() { vibratePattern(new long[]{0, 220}); }
++
++    private void vibratePattern(long[] pattern) {
++        if (vibrator == null || !vibrator.hasVibrator()) return;
++        try {
++            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1));
++            else vibrator.vibrate(pattern, -1);
++        } catch (Exception ignored) {}
++    }
++
+     @Override public void onBackPressed() {
+         if (inSupervisor && engine != null) {
+             showOperator();
+@@ -413,7 +450,7 @@
+ 
+         setContentView(r);
+         refreshOperator();
+-        scanInput.requestFocus();
++        focusScanner();
+     }
+ 
+     private void processScan() {
+@@ -430,7 +467,7 @@
+         }
+         showScanResult(result);
+         refreshOperator();
+-        scanInput.requestFocus();
++        focusScanner();
+     }
+ 
+     private void showScanResult(ScanResult x) {
+@@ -440,16 +477,20 @@
+             if ("TARIMA COMPLETA".equals(x.status)) {
+                 fill = C_LIGHT_GREEN; border = C_GREEN; main = C_GREEN;
+                 tones.startTone(ToneGenerator.TONE_PROP_ACK, 130);
++                vibrateOk();
+             } else {
+                 fill = C_LIGHT_BLUE; border = C_BLUE; main = C_BLUE;
+                 tones.startTone(ToneGenerator.TONE_PROP_BEEP, 90);
++                vibrateOk();
+             }
+         } else if ("DUPLICADA".equals(x.status)) {
+             fill = C_LIGHT_RED; border = C_RED; main = C_RED;
+             tones.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 250);
++            vibrateDuplicate();
+         } else {
+             fill = C_LIGHT_ORANGE; border = C_ORANGE; main = C_ORANGE;
+             tones.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT, 220);
++            vibrateError();
+         }
+         if (resultBox != null) resultBox.setBackground(box(fill, border, 14));
+ 
+@@ -457,17 +498,34 @@
+             positionResult.setText(x.position);
+             positionResult.setTextColor(main);
+             statusResult.setText(x.message);
+-            codeResult.setText(x.code);
++            codeResult.setText((x.normalizedBarcode == null || x.normalizedBarcode.isEmpty()) ? x.code : x.normalizedBarcode);
+             countResult.setText(x.received + " / " + x.expected);
++        } else if ("DUPLICADA".equals(x.status)) {
++            positionResult.setText(x.position == null || x.position.isEmpty() ? "⛔" : x.position);
++            positionResult.setTextColor(main);
++            statusResult.setText("YA ESCANEADA");
++            String msg = x.normalizedBarcode == null ? "" : x.normalizedBarcode;
++            if (x.firstScanTime != null && !x.firstScanTime.isEmpty()) msg += " · " + x.firstScanTime;
++            codeResult.setText(msg);
++            countResult.setText("NO CONTABILIZAR DE NUEVO");
++        } else if ("FUERA DE RANGO".equals(x.status)) {
++            positionResult.setText("⚠");
++            positionResult.setTextColor(main);
++            statusResult.setText("FUERA DE RANGO · POSIBLE SOBRANTE");
++            codeResult.setText(x.message == null ? "" : x.message);
++            countResult.setText("NO CONTABILIZADA");
++        } else if (x.status != null && x.status.startsWith("LECTURA")) {
++            positionResult.setText("⚠");
++            positionResult.setTextColor(main);
++            statusResult.setText(x.status);
++            codeResult.setText(x.message == null ? "" : x.message);
++            countResult.setText("VOLVER A ESCANEAR");
+         } else {
+             positionResult.setText(x.position == null || x.position.isEmpty() ? "⛔" : x.position);
+             positionResult.setTextColor(main);
+             statusResult.setText(x.status);
+-            String msg = x.message == null ? "" : x.message;
+-            if ("DUPLICADA".equals(x.status) && x.firstScanTime != null && !x.firstScanTime.isEmpty()) {
+-                msg += " · primera vez " + x.firstScanTime;
+-            }
+-            codeResult.setText(msg);
++            codeResult.setText(x.message == null ? "" : x.message);
+             countResult.setText(x.expected > 0 ? x.received + " / " + x.expected : "NO COLOCAR");
+         }
+     }
+@@ -566,15 +624,110 @@
+         card.addView(title);
+         if (c.detail != null && !c.detail.isEmpty()) card.addView(detail);
+ 
++        if (c.enabled && !"NO HABILITADA".equals(c.state)) {
++            card.setClickable(true);
++            card.setOnClickListener(v -> showPositionDetail(c.label));
++        }
++
+         GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+         int screenWidth = getResources().getDisplayMetrics().widthPixels;
+         lp.width = Math.max(dp(120), (screenWidth - dp(32)) / 2);
+-        lp.height = dp(68);
++        lp.height = dp(72);
+         lp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED);
+         lp.setMargins(dp(2), dp(2), dp(2), dp(2));
+         mapGrid.addView(card, lp);
+     }
+ 
++    private String positionDetailText(Position p) {
++        StringBuilder sb = new StringBuilder();
++        if (p == null) return "Posición no encontrada";
++        sb.append(p.label()).append(" · ");
++        if (!p.enabled) sb.append("NO HABILITADA");
++        else if (p.waitingRemoval) sb.append("COMPLETA / PENDIENTE DE RETIRO");
++        else if (p.isFree()) sb.append("LIBRE");
++        else sb.append("EN PROCESO");
++        sb.append("\n");
++
++        if (p.isFree()) return sb.toString();
++        sb.append("Tarima: ").append(p.palletSeq + 1).append(" · ").append(p.kind).append("\n");
++        sb.append("Cajas en esta tarima: ").append(p.boxesOnCurrentPallet).append("\n");
++        sb.append(String.format(Locale.getDefault(), "CBM registrado: %.3f m³\n", p.actualCbm));
++        double weight = engine.estimatedWeight(p);
++        if (weight >= 0) sb.append(String.format(Locale.getDefault(), "Peso estimado: %.1f kg\n", weight));
++        if (p.waitingRemoval && p.removalReason != null && !p.removalReason.isEmpty()) {
++            sb.append("Motivo de cierre: ").append(p.removalReason).append("\n");
++        }
++        sb.append("\nCÓDIGOS EN TARIMA\n");
++        for (String code : p.reservedCodes) {
++            com.ilubox.descargapda.core.CodeRecord rec = engine.records.get(code);
++            if (rec == null) continue;
++            int local = p.boxesForCode(code);
++            int total = engine.received.get(code);
++            sb.append(code).append("  ·  ").append(local).append(" caja(s) aquí")
++                    .append("  ·  total ").append(total).append("/").append(rec.boxes).append("\n");
++            List<String> missing = engine.missingBoxes(code, 6);
++            if (!missing.isEmpty() && total < rec.boxes) {
++                sb.append("   Faltan: ");
++                for (int i = 0; i < missing.size(); i++) {
++                    if (i > 0) sb.append(", ");
++                    sb.append(missing.get(i));
++                }
++                if (rec.boxes - total > missing.size()) sb.append(" …");
++                sb.append("\n");
++            }
++        }
++        return sb.toString().trim();
++    }
++
++    private void showPositionDetail(String label) {
++        Position p = engine == null ? null : engine.findPosition(label);
++        if (p == null) return;
++        AlertDialog.Builder b = new AlertDialog.Builder(this)
++                .setTitle("Detalle " + p.label())
++                .setMessage(positionDetailText(p))
++                .setNegativeButton("Cerrar", (d, w) -> focusScanner());
++
++        if (!inSupervisor) {
++            if (p.waitingRemoval) {
++                b.setPositiveButton("✓ POSICIÓN LISTA", (d, w) -> {
++                    ActionResult a = engine.markPositionReady(p.label());
++                    if (a.ok) {
++                        db.insertSystemEvent("POSICIÓN LISTA", a.position, a.message);
++                        saveQuietly();
++                        lastPosition = a.position;
++                        Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
++                        refreshOperator();
++                    }
++                    focusScanner();
++                });
++            } else if (!p.isFree() && p.boxesOnCurrentPallet > 0) {
++                b.setPositiveButton("TARIMA LLENA / NO CABE MÁS", (d, w) -> {
++                    ActionResult a = engine.closePositionEarly(p.label());
++                    if (a.ok) {
++                        db.insertSystemEvent("TARIMA LLENA MANUAL", a.position, a.message);
++                        saveQuietly();
++                        lastPosition = a.position;
++                        Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
++                        refreshOperator();
++                    } else Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
++                    focusScanner();
++                });
++            }
++        } else if (p.waitingRemoval) {
++            b.setPositiveButton("REABRIR TARIMA", (d, w) -> {
++                ActionResult a = engine.reopenPosition(p.label());
++                if (a.ok) {
++                    db.insertSystemEvent("TARIMA REABIERTA", a.position, a.message);
++                    saveQuietly();
++                    Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
++                    showSupervisor();
++                } else Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
++            });
++        }
++        b.setOnDismissListener(d -> focusScanner());
++        b.show();
++    }
++
+     private void refreshRecent() {
+@@ -623,6 +776,11 @@
+         r.addView(supervisorSideRow("DERECHA", "D"));
+         r.addView(spacer(16));
+ 
++        Button undoScan = button("↶  CORREGIR ÚLTIMO ESCANEO ACEPTADO", C_ORANGE, Color.WHITE);
++        undoScan.setOnClickListener(v -> showUndoLastScanDialog());
++        r.addView(undoScan, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
++        r.addView(spacer(10));
++
+         Button export = button("⬇  EXPORTAR HISTORIAL CSV", C_DARK, Color.WHITE);
+@@ -660,15 +818,19 @@
+         row.addView(lbl, new LinearLayout.LayoutParams(0, dp(52), 1f));
+         Button minus = button("−", C_DISABLED, C_DARK);
+         Button plus = button("+", C_GREEN, Color.WHITE);
+-        minus.setOnClickListener(v -> {
+-            ActionResult a = engine.disableLastFree(side);
+-            if (!a.ok) Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
+-            else {
+-                db.insertSystemEvent("POSICIÓN DESHABILITADA", a.position, a.message);
+-                saveQuietly();
+-                showSupervisor();
+-            }
+-        });
++        minus.setOnClickListener(v -> new AlertDialog.Builder(this)
++                .setTitle("Deshabilitar posición")
++                .setMessage("Solo se deshabilitará la última posición libre del lado " + side + ". ¿Continuar?")
++                .setNegativeButton("Cancelar", null)
++                .setPositiveButton("Deshabilitar", (d, which) -> {
++                    ActionResult a = engine.disableLastFree(side);
++                    if (!a.ok) Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
++                    else {
++                        db.insertSystemEvent("POSICIÓN DESHABILITADA", a.position, a.message);
++                        saveQuietly();
++                        showSupervisor();
++                    }
++                }).show());
+@@ -683,6 +845,54 @@
+         return row;
+     }
+ 
++    private void showUndoLastScanDialog() {
++        PilotDatabase.EventRow e = db.lastAcceptedScanEvent();
++        if (e == null) {
++            Toast.makeText(this, "No hay un escaneo aceptado para corregir", Toast.LENGTH_SHORT).show();
++            return;
++        }
++        if (db.hasStateChangeAfter(e.id)) {
++            new AlertDialog.Builder(this)
++                    .setTitle("Corrección bloqueada")
++                    .setMessage("Después de ese escaneo hubo un cambio físico de posición/tarima. Para conservar trazabilidad no se puede anular automáticamente.")
++                    .setPositiveButton("Entendido", null)
++                    .show();
++            return;
++        }
++        if (e.normalizedScan == null || e.normalizedScan.isEmpty()) {
++            Toast.makeText(this, "El último registro no tiene barcode individual", Toast.LENGTH_SHORT).show();
++            return;
++        }
++        EditText reason = new EditText(this);
++        reason.setHint("Motivo de la corrección (obligatorio)");
++        reason.setSingleLine(false);
++        reason.setPadding(dp(14), dp(10), dp(14), dp(10));
++        new AlertDialog.Builder(this)
++                .setTitle("Anular último escaneo aceptado")
++                .setMessage(e.normalizedScan + "\nPosición: " + e.position + "\nHora: " + e.time +
++                        "\n\nLa caja volverá a quedar pendiente y el evento original NO se borrará.")
++                .setView(reason)
++                .setNegativeButton("Cancelar", null)
++                .setPositiveButton("ANULAR", (d, which) -> {
++                    String why = reason.getText().toString().trim();
++                    if (why.isEmpty()) {
++                        Toast.makeText(this, "No se anuló: escriba un motivo", Toast.LENGTH_LONG).show();
++                        return;
++                    }
++                    ActionResult a = engine.undoAcceptedBox(e.normalizedScan);
++                    if (!a.ok) {
++                        Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
++                        return;
++                    }
++                    db.insertSystemEvent("ESCANEO ANULADO", a.position,
++                            a.message + " · Evento original #" + e.id + " · Motivo: " + why);
++                    saveQuietly();
++                    Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
++                    showSupervisor();
++                })
++                .show();
++    }
++
+     private void saveQuietly() {
