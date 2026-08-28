@@ -149,7 +149,7 @@ def accept_snapshot(store, identifier, token, device, body):
 def export_wms(store, identifier, order):
     with store.transaction() as con:
         row = con.execute("SELECT * FROM sessions WHERE id=?", (identifier,)).fetchone()
-        if not row or not row["sealed"]:
+        if not row or not row["sealed"] or not row["payload"]:
             raise Rejected("La PDA debe cerrar y sincronizar la descarga antes de exportar.")
         previous = con.execute("SELECT * FROM exports WHERE session_id=? AND revision=?", (identifier, row["revision"])).fetchone()
         order = re.sub(r"\s+", "", order).upper()

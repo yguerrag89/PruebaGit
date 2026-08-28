@@ -29,7 +29,9 @@ en disco local y un virtual host Nginx dedicado en **192.168.100.228:8443** (pro
 verificar disponibilidad). No abrir 8600 a la red. No usar Docker ni instalar PostgreSQL
 en esta variante: SQLite transaccional evita otra dependencia en el servidor compartido.
 Una PDA por descarga; pueden existir descargas independientes. Este piloto limita
-cada Packing List a un contenedor, 10 000 cajas y 16 MiB por envío. Medir carga antes
+cada Packing List a un contenedor, 10 000 cajas (máximo 999 por código, U001…U999)
+y 16 MiB por envío. Retirar filas de totales y corregir cantidades/volúmenes antes
+de cargar: el servidor rechaza filas inválidas en vez de omitirlas. Medir carga antes
 de ampliar concurrencia; para alta disponibilidad/múltiples servidores, migrar a PostgreSQL.
 
 No hay cambios en XLWMS por API, catálogo de temporales, QR, exportación por lotes de
@@ -120,6 +122,10 @@ No abrir Anywhere. No eliminar reglas de 22/80 de otras apps. El endpoint propue
 `https://192.168.100.228:8443`. Probar desde la misma Wi-Fi/VLAN que usará la PDA.
 Acceder a `/login`, cargar XLSX y guardar temporalmente la credencial de asignación que
 se muestra una sola vez. En PDA: SERVIDOR → URL HTTPS → código de asignación → INICIAR.
+Si se pierde el código antes de conectar la PDA, el panel permite generar otro y
+revoca el anterior. También permite anular un Packing List incorrecto **solo antes
+de que una PDA lo reclame**. Una vez asignado no hay reinicio remoto: puede haber
+cajas capturadas offline que el servidor aún no conoce.
 
 ## 4. Respaldo, recuperación y reversión
 

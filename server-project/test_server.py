@@ -144,6 +144,30 @@ class ServerTest(unittest.TestCase):
         response=self.client.post("/sessions",headers={"Origin":"https://testserver"},data={"csrf":csrf},files={"packing":("bad.xlsx",b"notxlsx")})
         self.assertEqual(422,response.status_code)
 
+    def test_upload_and_reject_fractional_counts(self):
+        csrf=self.login()
+        for count,expected in [(1.5,422),(2,200)]:
+            book=Workbook();sheet=book.active
+            sheet.append(["Codigo","Cajas","CBM","Contenedor"])
+            sheet.append(["NUEVA",count,.2,"MSKU1234567"])
+            content=io.BytesIO();book.save(content)
+            response=self.client.post("/sessions",headers={"Origin":"https://testserver"},data={"csrf":csrf,"left":1,"right":0},files={"packing":("packing.xlsx",content.getvalue())})
+            self.assertEqual(expected,response.status_code,response.text[:500])
+
+    def test_unclaimed_assignment_correction(self):
+        csrf=self.login()
+        manifest=copy.deepcopy(self.manifest);manifest["container_id"]="SIN-ASIGNAR"
+        sid,pairing=create_session(self.store,manifest,1,0)
+        headers={"Origin":"https://testserver"}
+        response=self.client.post(f"/sessions/{sid}/assignment",headers=headers,data={"csrf":csrf,"action":"reissue"})
+        self.assertEqual(200,response.status_code)
+        with self.assertRaises(Rejected): claim_session(self.store,sid,pairing.split(".")[1],str(uuid.uuid4()))
+        response=self.client.post(f"/sessions/{sid}/assignment",headers=headers,data={"csrf":csrf,"action":"cancel"})
+        self.assertEqual(200,response.status_code)
+        with self.assertRaises(Rejected): export_wms(self.store,sid,"PAS-TEST")
+        create_session(self.store,manifest,1,0)
+        self.assertEqual(409,self.client.post(f"/sessions/{self.sid}/assignment",headers=headers,data={"csrf":csrf,"action":"cancel"}).status_code)
+
 
 if __name__=="__main__":
     unittest.main()
