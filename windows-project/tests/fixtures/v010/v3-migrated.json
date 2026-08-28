@@ -1,0 +1,26 @@
+{
+  "schema":"ilubox.pda.result.v3",
+  "version":3,
+  "container_id":"PRUEBA-MIGRACION",
+  "record_signature":"969dec05fcc443d15ef6ed8a2d45b1749e71ed97e0e9e7cbbef3e110c429184d",
+  "exported_at":"2026-08-28T01:32:34Z",
+  "engine_version":"0.10-operador-continuo",
+  "verification_model":"FINAL_PALLET",
+  "individual_sequence":{"prefix":"U","start":1,"consecutive":true,"padding":3},
+  "progress":{"received":3,"expected":12,"in_final":1,"wms_eligible":1},
+  "active_transfer":"TR-02",
+  "transfers":[
+    {"id":"TR-01","closed":true,"boxes":1,"verified_boxes":0,"status":"PENDIENTE_VERIFICACION"},
+    {"id":"TR-02","closed":false,"boxes":0,"verified_boxes":0,"status":"EN_FORMACION"}
+  ],
+  "pallets":[
+    {"id":"T-01","formation":"TENDIDO","physical_position":"","status":"EN FORMACIÓN","expected":2,"original_expected":2,"scanned":1,"in_final":0,"validated":false,"retired":false,"closure_reason":"","verification_method":"","verified_by":"","verified_at":"","verified_boxes":0},
+    {"id":"T-02","formation":"PIE","physical_position":"I01","status":"RETIRADA","expected":1,"original_expected":1,"scanned":1,"in_final":1,"validated":true,"retired":true,"closure_reason":"","verification_method":"LEGADO_V09","verified_by":"","verified_at":"","verified_boxes":1},
+    {"id":"T-03","formation":"PIE","physical_position":"I01","status":"EN FORMACIÓN","expected":4,"original_expected":4,"scanned":1,"in_final":0,"validated":false,"retired":false,"closure_reason":"","verification_method":"","verified_by":"","verified_at":"","verified_boxes":0}
+  ],
+  "accepted_events":[
+    {"raw_scan":"CHICOU001","barcode":"CHICOU001","code":"CHICO","box_number":1,"final_pallet":"T-01","physical_position":"","transfer_pallet":"TR-01","direct_to_final":false,"transfer_closed":true,"physical_state":"PENDIENTE_VERIFICAR","final_pallet_validated":false,"wms_eligible":false,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"GRANDEU003","barcode":"GRANDEU003","code":"GRANDE","box_number":3,"final_pallet":"T-03","physical_position":"I01","transfer_pallet":"","direct_to_final":true,"transfer_closed":false,"physical_state":"PENDIENTE_VERIFICAR","final_pallet_validated":false,"wms_eligible":false,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"GRANDEU009","barcode":"GRANDEU009","code":"GRANDE","box_number":9,"final_pallet":"T-02","physical_position":"I01","transfer_pallet":"","direct_to_final":true,"transfer_closed":false,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-28 10:00:00"}
+  ]
+}

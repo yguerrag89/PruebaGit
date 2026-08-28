@@ -7,6 +7,7 @@ import re
 import unicodedata
 
 from openpyxl import load_workbook
+from .strict_scan import parse_strict_scan
 
 
 WMS_HEADERS = (
@@ -83,7 +84,7 @@ def summarize_pallets(accepted_events: Iterable[Mapping]) -> list[dict]:
         if pallet_id not in grouped:
             grouped[pallet_id] = {
                 "Tarima": pallet_id,
-                "Posición física": _normalized_text(event.get("Posición", "")),
+                "Posición física": _normalized_text(event.get("Posición física", event.get("Posición", ""))),
                 "Cajas": 0,
                 "Primera caja": _canonical_identifier(event.get("Escaneo", "")),
             }
@@ -172,9 +173,13 @@ def build_putaway_rows(
         barcode = _canonical_identifier(event.get("Escaneo", ""))
         base_code = _canonical_identifier(event.get("Código", ""))
         pallet_id = pallet_id_for_event(event)
-        physical_position = _normalized_text(event.get("Posición", ""))
+        physical_position = _normalized_text(event.get("Posición física", event.get("Posición", "")))
 
-        if require_final_validation and event.get("Elegible WMS") is not True:
+        if require_final_validation and not (
+            event.get("Elegible WMS") is True
+            and event.get("Estado físico") == "EN_DEFINITIVA"
+            and event.get("Tarima validada") is True
+        ):
             physical_state = _normalized_text(event.get("Estado físico", "SIN CONFIRMACIÓN"))
             validated = event.get("Tarima validada") is True
             result.errors.append(
@@ -203,6 +208,11 @@ def build_putaway_rows(
                 f"Caja {sequence}: {barcode} es el código base de un grupo de "
                 f"{expected_boxes} cajas; se requiere el código individual real."
             )
+            continue
+
+        individual = parse_strict_scan(barcode, records_by_code)
+        if not individual.valid or individual.code != base_code or individual.normalized_barcode != barcode:
+            result.errors.append(f"Caja {sequence}: código individual inválido o fuera del Packing List: {barcode}.")
             continue
 
         location = _normalized_text(location_by_pallet.get(pallet_id, ""))

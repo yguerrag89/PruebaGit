@@ -3,9 +3,9 @@ package com.ilubox.descargapda.core;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -61,7 +61,7 @@ public class BufferManager implements Serializable {
         ArrayList<BufferSector> out = new ArrayList<>();
         if (code == null) return out;
         for (BufferSector s : sectors) if (code.equals(s.code)) out.add(s);
-        out.sort(Comparator.comparing(BufferSector::label));
+        Collections.sort(out, (a, b) -> a.label().compareTo(b.label()));
         return out;
     }
 
@@ -107,7 +107,9 @@ public class BufferManager implements Serializable {
             if (s.bufferIndex == palletCount && !s.isFree()) return false;
         }
         int last = palletCount;
-        sectors.removeIf(s -> s.bufferIndex == last);
+        for (Iterator<BufferSector> it = sectors.iterator(); it.hasNext();) {
+            if (it.next().bufferIndex == last) it.remove();
+        }
         palletCount -= 1;
         return true;
     }
@@ -156,7 +158,8 @@ public class BufferManager implements Serializable {
             if (rec == null) continue;
             List<BufferSector> codeSectors = sectorsForCode(code);
             if (codeSectors.isEmpty()) continue;
-            boolean wholeCodeComplete = received.getOrDefault(code, 0) >= rec.boxes;
+            Integer codeReceived = received.get(code);
+            boolean wholeCodeComplete = (codeReceived == null ? 0 : codeReceived) >= rec.boxes;
             double buffered = 0.0;
             for (BufferSector s : codeSectors) buffered += s.actualCbm;
 
@@ -171,7 +174,7 @@ public class BufferManager implements Serializable {
             if (buffered + 1e-9 < promotionThreshold && !wholeCodeComplete) continue;
 
             ArrayList<BufferSector> sorted = new ArrayList<>(codeSectors);
-            sorted.sort((a,b) -> Double.compare(b.actualCbm, a.actualCbm));
+            Collections.sort(sorted, (a,b) -> Double.compare(b.actualCbm, a.actualCbm));
             ArrayList<BufferSector> chosen = new ArrayList<>();
             double sum = 0.0;
             for (BufferSector s : sorted) {
@@ -195,7 +198,7 @@ public class BufferManager implements Serializable {
         }
 
         // Orden estable: primero los bloques grandes / voluminosos, luego completos menores.
-        out.sort((a,b) -> {
+        Collections.sort(out, (a,b) -> {
             int reason = Boolean.compare(b.reason.contains("GRANDE"), a.reason.contains("GRANDE"));
             if (reason != 0) return reason;
             int cbmCmp = Double.compare(b.cbm, a.cbm);

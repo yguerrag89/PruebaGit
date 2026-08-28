@@ -1,6 +1,8 @@
 package com.ilubox.descargapda.core;
 
 import java.io.Serializable;
+import java.io.IOException;
+import java.io.ObjectInputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -13,13 +15,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class UnloadEngine implements Serializable {
     private static final long serialVersionUID = 3L;
     public static final int MAX_PER_SIDE = 10;
-    public static final String ENGINE_VERSION = "0.9-dynamic-wms";
+    public static final String ENGINE_VERSION = "0.10-operador-continuo";
 
     public static class FinalPalletView implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -31,14 +34,70 @@ public class UnloadEngine implements Serializable {
         /** Cajas confirmadas físicamente en la tarima definitiva. */
         public int received;
         public int codeCount;
+        public int plannedCodeCount;
         public String status;
         public String physicalPosition = "";
         public boolean validated;
+        public boolean retired;
+        public int originalExpected;
+        public String closureReason = "";
 
         public FinalPalletView(String label, boolean direct) {
             this.label = label;
             this.direct = direct;
         }
+    }
+
+    /** La verificación es una declaración humana de contenido, no una lectura de rack. */
+    public static class PalletVerification implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public final String responsible;
+        public final String time;
+        public final String method;
+        public final int boxes;
+
+        public PalletVerification(String responsible, String time, String method, int boxes) {
+            this.responsible = responsible;
+            this.time = time;
+            this.method = method;
+            this.boxes = boxes;
+        }
+    }
+
+    public static class PalletCodeView {
+        public final String code;
+        public int scanned;
+        public int expected;
+        public PalletCodeView(String code) { this.code = code; }
+    }
+
+    /** Proyección compartida de solo lectura: los pendientes no se confunden con cajas presentes. */
+    public List<PalletCodeView> palletCodeViews(String pallet) {
+        LinkedHashMap<String, PalletCodeView> rows = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : finalPalletForBarcode.entrySet()) {
+            if (!pallet.equals(e.getValue())) continue;
+            String barcode = e.getKey();
+            String code = barcode.substring(0, barcode.lastIndexOf('U'));
+            PalletCodeView row = rows.get(code);
+            if (row == null) { row = new PalletCodeView(code); rows.put(code, row); }
+            row.expected++;
+            if (scannedUniqueBarcodes.containsKey(barcode)) row.scanned++;
+        }
+        ArrayList<PalletCodeView> out = new ArrayList<>(rows.values());
+        if (directCodeForPallet.containsKey(pallet)) {
+            for (PalletCodeView row : out) row.expected = expectedForPallet(pallet);
+        }
+        Collections.sort(out, (a, b) -> a.code.compareTo(b.code));
+        return out;
+    }
+
+    public List<String> palletAcceptedBarcodes(String pallet) {
+        ArrayList<String> out = new ArrayList<>();
+        for (String barcode : scannedUniqueBarcodes.keySet()) {
+            if (pallet.equals(finalPalletForBarcode.get(barcode))) out.add(barcode);
+        }
+        Collections.sort(out);
+        return out;
     }
 
     public static class ScanMeta implements Serializable {
@@ -102,9 +161,9 @@ public class UnloadEngine implements Serializable {
     public final LinkedHashMap<String, String> activeFinalPalletForFootPosition = new LinkedHashMap<>();
     /** Objetivo de cajas de cada tarima directa, independiente del número Uxxx. */
     public final LinkedHashMap<String, Integer> directExpectedForPallet = new LinkedHashMap<>();
-    /** Definitivas físicamente completas y pendientes de validación. */
+    /** Definitivas con captura completa o cierre parcial; aún requieren revisión física. */
     public final HashSet<String> readyFinalPallets = new HashSet<>();
-    /** Definitivas validadas por el supervisor; único estado elegible para WMS. */
+    /** Definitivas verificadas por quien observa su contenido; único estado elegible para WMS. */
     public final HashSet<String> validatedFinalPallets = new HashSet<>();
     /** Directas que ya salieron y liberaron su posición al pie. */
     public final HashSet<String> retiredDirectPallets = new HashSet<>();
@@ -116,6 +175,37 @@ public class UnloadEngine implements Serializable {
     public int transferIncidentCount = 0;
     public int nextFinalPalletSeq = 1;
     public int estimatedDirectFinalPallets = 0;
+    // No son final: ObjectInputStream debe inicializarlos al recuperar una sesión V0.9.
+    private LinkedHashMap<String, PalletVerification> palletVerifications = new LinkedHashMap<>();
+    private LinkedHashMap<String, Integer> originalDirectExpected = new LinkedHashMap<>();
+    private LinkedHashMap<String, String> partialClosureReasons = new LinkedHashMap<>();
+    private HashSet<String> retiredFinalPallets = new HashSet<>();
+    private int operationModelVersion = 10;
+
+    private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        boolean legacy = operationModelVersion < 10;
+        if (palletVerifications == null) palletVerifications = new LinkedHashMap<>();
+        if (originalDirectExpected == null) originalDirectExpected = new LinkedHashMap<>();
+        if (partialClosureReasons == null) partialClosureReasons = new LinkedHashMap<>();
+        if (retiredFinalPallets == null) retiredFinalPallets = new HashSet<>();
+        retiredFinalPallets.addAll(retiredDirectPallets);
+        for (Map.Entry<String, Integer> e : directExpectedForPallet.entrySet()) {
+            if (!originalDirectExpected.containsKey(e.getKey())) originalDirectExpected.put(e.getKey(), e.getValue());
+        }
+        if (legacy && isTransferMode()) {
+            // Conservar la comprobación antigua, sin inventar un responsable ni una fecha.
+            for (String pallet : validatedFinalPallets) {
+                palletVerifications.put(pallet, new PalletVerification("", "", "LEGADO_V09", palletScannedCount(pallet)));
+            }
+            // Una TR que ya salió en V0.9 no debe recibir nuevas cajas tras actualizar.
+            if (currentTransferInDistribution() || distributedTransfers.contains(currentTransferPallet())) {
+                startNextTransferPallet();
+            }
+        }
+        operationModelVersion = 10;
+        if (isTransferMode()) refreshTendidoReadiness();
+    }
 
     public UnloadEngine(String containerId, List<CodeRecord> inputRecords, Settings settings,
                         int initialLeft, int initialRight) {
@@ -173,7 +263,7 @@ public class UnloadEngine implements Serializable {
         return String.format(Locale.ROOT, "TR-%02d", transferPalletSeq);
     }
 
-    public String startNextTransferPallet() {
+    private String startNextTransferPallet() {
         transferPalletSeq += 1;
         return currentTransferPallet();
     }
@@ -183,17 +273,25 @@ public class UnloadEngine implements Serializable {
     }
 
     public int currentTransferBoxCount() {
+        return transferBoxCount(currentTransferPallet());
+    }
+
+    public int transferBoxCount(String transfer) {
         int n = 0;
-        String current = currentTransferPallet();
-        for (String tr : transferForBarcode.values()) if (current.equals(tr)) n++;
+        for (Map.Entry<String, String> e : transferForBarcode.entrySet()) {
+            if (transfer.equals(e.getValue()) && scannedUniqueBarcodes.containsKey(e.getKey())) n++;
+        }
         return n;
     }
 
     public LinkedHashMap<String, Integer> currentTransferDestinations() {
+        return transferDestinations(currentTransferPallet());
+    }
+
+    public LinkedHashMap<String, Integer> transferDestinations(String transfer) {
         LinkedHashMap<String, Integer> out = new LinkedHashMap<>();
-        String current = currentTransferPallet();
         for (Map.Entry<String, String> e : transferForBarcode.entrySet()) {
-            if (!current.equals(e.getValue())) continue;
+            if (!transfer.equals(e.getValue()) || !scannedUniqueBarcodes.containsKey(e.getKey())) continue;
             String target = finalPalletForBarcode.get(e.getKey());
             Integer old = out.get(target);
             out.put(target, old == null ? 1 : old + 1);
@@ -201,24 +299,40 @@ public class UnloadEngine implements Serializable {
         return out;
     }
 
-    public ActionResult sendCurrentTransfer() {
+    /** Registra la frontera entre viajes; no afirma que las cajas ya estén en las T-xx. */
+    public ActionResult changeCurrentTransfer() {
         String current = currentTransferPallet();
+        if (!isTransferMode()) return new ActionResult(false, current, "Esta acción requiere modo TRASLADO", false);
         if (currentTransferBoxCount() == 0) return new ActionResult(false, current, "El traslado está vacío", false);
-        if (transfersInDistribution.contains(current)) return new ActionResult(false, current, current + " ya está en distribución", false);
         transfersInDistribution.add(current);
-        return new ActionResult(true, current, current + " enviado al tendido", false);
+        String next = startNextTransferPallet();
+        return new ActionResult(true, current, current + " cerrado · usar " + next + " · puede seguir escaneando", true);
     }
 
-    public ActionResult confirmCurrentTransferDistribution() {
-        String current = currentTransferPallet();
-        if (!transfersInDistribution.contains(current)) {
-            return new ActionResult(false, current, "Primero envíe el traslado al tendido", false);
+    public boolean isTransferClosed(String transfer) {
+        return transfer != null && (transfersInDistribution.contains(transfer) || distributedTransfers.contains(transfer));
+    }
+
+    public List<String> transferLabels() {
+        HashSet<String> labels = new HashSet<>(transferForBarcode.values());
+        labels.add(currentTransferPallet());
+        ArrayList<String> out = new ArrayList<>(labels);
+        Collections.sort(out, (a, b) -> Integer.compare(palletNumber(a), palletNumber(b)));
+        return out;
+    }
+
+    public int transferVerifiedBoxCount(String transfer) {
+        int n = 0;
+        for (Map.Entry<String, String> e : transferForBarcode.entrySet()) {
+            if (transfer.equals(e.getValue()) && isBoxWmsEligible(e.getKey())) n++;
         }
-        transfersInDistribution.remove(current);
-        distributedTransfers.add(current);
-        refreshTendidoReadiness();
-        String next = startNextTransferPallet();
-        return new ActionResult(true, current, current + " distribuido · activo " + next, true);
+        return n;
+    }
+
+    public String transferStatus(String transfer) {
+        if (!isTransferClosed(transfer)) return "EN_FORMACION";
+        return transferBoxCount(transfer) > 0 && transferVerifiedBoxCount(transfer) == transferBoxCount(transfer)
+                ? "VERIFICADO_POR_TARIMAS" : "PENDIENTE_VERIFICACION";
     }
 
     public List<FinalPalletView> finalPalletViews() {
@@ -248,14 +362,22 @@ public class UnloadEngine implements Serializable {
         for (FinalPalletView v : views.values()) {
             if (v.direct) v.expected = directExpectedForPallet.containsKey(v.label)
                     ? directExpectedForPallet.get(v.label) : Math.max(1, v.scanned);
-            v.codeCount = codes.get(v.label).size();
+            v.plannedCodeCount = codes.get(v.label).size();
+            HashSet<String> actualCodes = new HashSet<>();
+            for (Map.Entry<String, ScanMeta> entry : scannedUniqueBarcodes.entrySet()) {
+                if (v.label.equals(finalPalletForBarcode.get(entry.getKey()))) actualCodes.add(entry.getValue().code);
+            }
+            v.codeCount = actualCodes.size();
             v.physicalPosition = footPositionForFinalPallet.containsKey(v.label)
                     ? footPositionForFinalPallet.get(v.label) : "";
             v.validated = validatedFinalPallets.contains(v.label);
-            if (v.validated) v.status = "VALIDADA";
-            else if (readyFinalPallets.contains(v.label) || (v.expected > 0 && v.received >= v.expected)) v.status = "LISTA";
-            else if (v.received > 0) v.status = "EN FORMACIÓN";
-            else if (v.scanned > 0) v.status = "EN TRASLADO";
+            v.retired = isPalletRetired(v.label);
+            v.originalExpected = originalExpectedForPallet(v.label);
+            v.closureReason = partialClosureReasons.containsKey(v.label) ? partialClosureReasons.get(v.label) : "";
+            if (v.retired) v.status = "RETIRADA";
+            else if (v.validated) v.status = "VERIFICADA";
+            else if (isPalletReadyForVerification(v.label)) v.status = "REVISAR";
+            else if (v.scanned > 0) v.status = "EN FORMACIÓN";
             else v.status = "PREPARAR";
             out.add(v);
         }
@@ -342,15 +464,13 @@ public class UnloadEngine implements Serializable {
 
     public String boxPhysicalState(String barcode) {
         if (!scannedUniqueBarcodes.containsKey(barcode)) return "NO_ESCANEADA";
-        return isBarcodeInFinal(barcode) ? "EN_DEFINITIVA" : "EN_TRASLADO";
+        return isBarcodeInFinal(barcode) ? "EN_DEFINITIVA" : "PENDIENTE_VERIFICAR";
     }
 
     public boolean isBarcodeInFinal(String barcode) {
-        ScanMeta meta = scannedUniqueBarcodes.get(barcode);
-        if (meta == null) return false;
-        if (directFinalCodes.contains(meta.code)) return true;
-        String transfer = transferForBarcode.get(barcode);
-        return transfer != null && distributedTransfers.contains(transfer);
+        if (!scannedUniqueBarcodes.containsKey(barcode)) return false;
+        String pallet = finalPalletForBarcode.get(barcode);
+        return pallet != null && validatedFinalPallets.contains(pallet) && palletVerifications.containsKey(pallet);
     }
 
     public boolean isBoxWmsEligible(String barcode) {
@@ -379,46 +499,94 @@ public class UnloadEngine implements Serializable {
         return n;
     }
 
-    public ActionResult closeDirectPalletEarly(String pallet) {
+    public ActionResult closeDirectPalletEarly(String pallet, String reason) {
         if (!directCodeForPallet.containsKey(pallet)) {
             return new ActionResult(false, pallet, "La tarima no es una definitiva directa", false);
         }
         if (validatedFinalPallets.contains(pallet)) {
             return new ActionResult(false, pallet, pallet + " ya fue validada", false);
         }
-        int count = palletInFinalCount(pallet);
+        String why = reason == null ? "" : reason.trim();
+        if (why.isEmpty() || why.length() > 160) return new ActionResult(false, pallet, "Indique un motivo de cierre (1–160 caracteres)", false);
+        if (partialClosureReasons.containsKey(pallet)) return new ActionResult(false, pallet, pallet + " ya tiene cierre parcial", false);
+        int count = palletScannedCount(pallet);
         if (count <= 0) return new ActionResult(false, pallet, "La tarima no contiene cajas", false);
+        if (count >= expectedForPallet(pallet)) return new ActionResult(false, pallet, "La captura está completa: verifique la tarima", false);
+        originalDirectExpected.put(pallet, expectedForPallet(pallet));
         directExpectedForPallet.put(pallet, count);
+        partialClosureReasons.put(pallet, why);
         readyFinalPallets.add(pallet);
-        return new ActionResult(true, pallet, pallet + " cerrada con " + count + " cajas", false);
+        return new ActionResult(true, pallet, pallet + " cerrada parcialmente con " + count + " cajas · " + why
+                + ". Las demás cajas siguen pendientes; falta verificar y retirar.", false);
     }
 
-    public ActionResult validateFinalPallet(String pallet) {
+    public boolean isPalletReadyForVerification(String pallet) {
+        int count = palletScannedCount(pallet);
+        return count > 0 && !validatedFinalPallets.contains(pallet)
+                && (readyFinalPallets.contains(pallet) || count >= expectedForPallet(pallet));
+    }
+
+    public int originalExpectedForPallet(String pallet) {
+        Integer original = originalDirectExpected.get(pallet);
+        return original == null ? expectedForPallet(pallet) : original;
+    }
+
+    public PalletVerification verificationForPallet(String pallet) {
+        return palletVerifications.get(pallet);
+    }
+
+    public boolean isPalletRetired(String pallet) {
+        return retiredFinalPallets.contains(pallet);
+    }
+
+    public ActionResult validateFinalPallet(String pallet, String responsible) {
         if (validatedFinalPallets.contains(pallet)) {
-            return new ActionResult(false, pallet, pallet + " ya fue validada", false);
+            return new ActionResult(false, pallet, pallet + " ya fue verificada", false);
         }
-        int count = palletInFinalCount(pallet);
+        String actor = responsible == null ? "" : responsible.trim();
+        if (actor.isEmpty() || actor.length() > 80 || actor.contains("\n") || actor.contains("\r")) {
+            return new ActionResult(false, pallet, "Indique nombre o iniciales del responsable (1–80 caracteres)", false);
+        }
+        int count = palletScannedCount(pallet);
         int expected = expectedForPallet(pallet);
-        if (!readyFinalPallets.contains(pallet) && (expected <= 0 || count < expected)) {
+        if (expected <= 0 || count != expected) {
             return new ActionResult(false, pallet,
-                    pallet + " todavía no está completa en la definitiva (" + count + "/" + expected + ")", false);
+                    pallet + " tiene captura incompleta (" + count + "/" + expected + "). No puede verificarse todavía.", false);
         }
         if (count <= 0) return new ActionResult(false, pallet, "La tarima no contiene cajas", false);
+        for (Map.Entry<String, String> e : transferForBarcode.entrySet()) {
+            if (pallet.equals(finalPalletForBarcode.get(e.getKey())) && !isTransferClosed(e.getValue())) {
+                return new ActionResult(false, pallet, pallet + " tiene cajas en el traslado activo " + e.getValue()
+                        + ". Cambie el traslado cuando salga y revise el contenido físico de la tarima.", false);
+            }
+        }
         validatedFinalPallets.add(pallet);
         readyFinalPallets.add(pallet);
+        SimpleDateFormat stamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT);
+        stamp.setTimeZone(TimeZone.getTimeZone("UTC"));
+        palletVerifications.put(pallet, new PalletVerification(actor, stamp.format(new Date()), "REVISION_FISICA", count));
+        return new ActionResult(true, pallet, pallet + " verificada por " + actor + " · " + count
+                + " cajas. La posición sigue ocupada hasta retirar la tarima.", false);
+    }
 
+    public ActionResult releaseFinalPallet(String pallet) {
+        if (!validatedFinalPallets.contains(pallet)) return new ActionResult(false, pallet, "Primero verifique el contenido de " + pallet, false);
+        if (isPalletRetired(pallet)) return new ActionResult(false, pallet, pallet + " ya fue retirada", false);
         if (directCodeForPallet.containsKey(pallet)) {
             String code = directCodeForPallet.get(pallet);
             String position = footPositionForFinalPallet.get(pallet);
-            if (pallet.equals(activeDirectPalletForCode.get(code))) activeDirectPalletForCode.remove(code);
-            if (position != null && pallet.equals(activeFinalPalletForFootPosition.get(position))) {
-                activeFinalPalletForFootPosition.remove(position);
+            if (position == null || !pallet.equals(activeFinalPalletForFootPosition.get(position))) {
+                return new ActionResult(false, pallet, "La posición ya no está ocupada por " + pallet, false);
             }
+            if (pallet.equals(activeDirectPalletForCode.get(code))) activeDirectPalletForCode.remove(code);
+            activeFinalPalletForFootPosition.remove(position);
             retiredDirectPallets.add(pallet);
+            retiredFinalPallets.add(pallet);
             return new ActionResult(true, pallet,
-                    pallet + " validada · posición " + (position == null ? "" : position) + " liberada", true);
+                    pallet + " retirada · posición " + position + " libre", true);
         }
-        return new ActionResult(true, pallet, pallet + " validada para exportación WMS", false);
+        retiredFinalPallets.add(pallet);
+        return new ActionResult(true, pallet, pallet + " retirada del tendido", true);
     }
 
     public int expectedForPallet(String pallet) {
@@ -432,7 +600,7 @@ public class UnloadEngine implements Serializable {
     private void refreshTendidoReadiness() {
         for (String pallet : plannedTendidoPallets) {
             int expected = expectedForPallet(pallet);
-            if (expected > 0 && palletInFinalCount(pallet) >= expected) readyFinalPallets.add(pallet);
+            if (expected > 0 && palletScannedCount(pallet) >= expected) readyFinalPallets.add(pallet);
         }
     }
 
@@ -456,6 +624,7 @@ public class UnloadEngine implements Serializable {
         footPositionForFinalPallet.put(pallet, freePosition);
         activeFinalPalletForFootPosition.put(freePosition, pallet);
         directExpectedForPallet.put(pallet, Math.min(remaining, capacity));
+        originalDirectExpected.put(pallet, Math.min(remaining, capacity));
         return pallet;
     }
 
@@ -481,15 +650,6 @@ public class UnloadEngine implements Serializable {
     }
 
     public ScanResult scanTransfer(String rawScan) {
-        if (currentTransferInDistribution()) {
-            transferIncidentCount++;
-            ScanResult locked = ScanResult.fail("TRASLADO EN DISTRIBUCIÓN",
-                    "Confirme la distribución de " + currentTransferPallet() + " antes de continuar");
-            locked.position = currentTransferPallet();
-            locked.rawScan = canonicalScan(rawScan);
-            locked.scan = locked.rawScan;
-            return locked;
-        }
         ParsedScan parsed = parseScan(rawScan);
         if (!parsed.valid) {
             transferIncidentCount++;
@@ -524,7 +684,8 @@ public class UnloadEngine implements Serializable {
             if (target != null && readyFinalPallets.contains(target)) {
                 transferIncidentCount++;
                 ScanResult blocked = ScanResult.fail("TARIMA LISTA PARA RETIRAR",
-                        target + " está completa. Valide y libere " + physicalPositionForPallet(target));
+                        target + (validatedFinalPallets.contains(target) ? " verificada: retire y libere " : ": revise su contenido antes de retirar de ")
+                                + physicalPositionForPallet(target));
                 blocked.code = code; blocked.rawScan = parsed.rawCanonical; blocked.normalizedBarcode = normalized;
                 blocked.scan = normalized; blocked.boxNumber = parsed.boxNumber; blocked.position = target;
                 blocked.finalPallet = target; blocked.received = received.get(code); blocked.expected = r.boxes;
@@ -534,7 +695,7 @@ public class UnloadEngine implements Serializable {
             if (target == null) {
                 transferIncidentCount++;
                 ScanResult noSpace = ScanResult.fail("SIN POSICIÓN AL PIE",
-                        "No hay una posición directa libre. Valide y retire una tarima antes de continuar.");
+                        "Abra TARIMAS: retire una verificada o cierre una parcial por falta de espacio. Esta caja no fue contada.");
                 noSpace.code = code; noSpace.rawScan = parsed.rawCanonical; noSpace.normalizedBarcode = normalized;
                 noSpace.scan = normalized; noSpace.boxNumber = parsed.boxNumber;
                 noSpace.received = received.get(code); noSpace.expected = r.boxes;
@@ -558,7 +719,7 @@ public class UnloadEngine implements Serializable {
         scannedUniqueBarcodes.put(normalized, new ScanMeta(target, code, now(), parsed.boxNumber, parsed.rawCanonical));
 
         if (direct) {
-            int palletCount = palletInFinalCount(target);
+            int palletCount = palletScannedCount(target);
             int palletTarget = expectedForPallet(target);
             if (palletCount >= palletTarget || newReceived >= r.boxes) readyFinalPallets.add(target);
         }
@@ -567,7 +728,7 @@ public class UnloadEngine implements Serializable {
                 ? (readyFinalPallets.contains(target) ? "TARIMA LISTA" : "DIRECTO A DEFINITIVA")
                 : "MARCAR Y TRASLADAR";
         out.message = direct ? (readyFinalPallets.contains(target)
-                ? target + " LISTA · VALIDAR Y LIBERAR " + physicalPositionForPallet(target)
+                ? "COLOCAR EN " + physicalPositionForPallet(target) + " · REVISAR " + target
                 : "FORMAR " + target + " EN " + physicalPositionForPallet(target))
                 : "MARCAR " + target.substring(2) + " · COLOCAR EN " + currentTransferPallet();
         out.code = code; out.rawScan = parsed.rawCanonical; out.normalizedBarcode = normalized;
@@ -576,6 +737,7 @@ public class UnloadEngine implements Serializable {
         out.physicalPosition = direct ? physicalPositionForPallet(target) : "TENDIDO";
         out.transferPallet = direct ? "" : currentTransferPallet();
         if (!direct) transferForBarcode.put(normalized, currentTransferPallet());
+        if (!direct && palletScannedCount(target) >= expectedForPallet(target)) readyFinalPallets.add(target);
         out.received = newReceived; out.expected = r.boxes; out.remaining = r.boxes - newReceived;
         return out;
     }
@@ -775,7 +937,7 @@ public class UnloadEngine implements Serializable {
         for (Position p : positions) {
             if (p.enabled && !p.isFree()) occupiedSide.put(p.side, occupiedSide.get(p.side) + 1);
         }
-        free.sort(new Comparator<Position>() {
+        Collections.sort(free, new Comparator<Position>() {
             @Override public int compare(Position a, Position b) {
                 int c = Integer.compare(Math.abs(a.slot - desired), Math.abs(b.slot - desired));
                 if (c != 0) return c;
@@ -964,7 +1126,8 @@ public class UnloadEngine implements Serializable {
             out.scan = normalized;
             out.boxNumber = boxNumber;
             out.code = code;
-            out.position = positionForCode.getOrDefault(code, "");
+            String previousPosition = positionForCode.get(code);
+            out.position = previousPosition == null ? "" : previousPosition;
             out.received = received.get(code);
             out.expected = r.boxes;
             return out;
@@ -1605,6 +1768,16 @@ public class UnloadEngine implements Serializable {
         CodeRecord r = records.get(meta.code);
         if (r == null) return new ActionResult(false, meta.position, "Código no encontrado", false);
 
+        if (isTransferMode()) {
+            String pallet = finalPalletForBarcode.get(key);
+            String transfer = transferForBarcode.get(key);
+            if (validatedFinalPallets.contains(pallet) || isPalletRetired(pallet)
+                    || partialClosureReasons.containsKey(pallet) || isTransferClosed(transfer)) {
+                return new ActionResult(false, meta.position,
+                        "La caja ya pertenece a una tarima cerrada/verificada o a un traslado que salió. Requiere conciliación.", false);
+            }
+        }
+
         // Si el contenedor se había marcado completo por esta caja, retirar ese cierre automático.
         for (Position q : positions) {
             if (q.waitingRemoval && "Contenedor completo".equals(q.removalReason)) {
@@ -1626,10 +1799,13 @@ public class UnloadEngine implements Serializable {
             if (directFinalCodes.contains(meta.code)) {
                 finalPalletForBarcode.remove(key);
                 readyFinalPallets.remove(pallet);
-                validatedFinalPallets.remove(pallet);
+                if (palletScannedCount(pallet) == 0) {
+                    // No queda mercancía en esta asignación: conservar el ID en auditoría sin ocupar un espacio vacío.
+                    activeDirectPalletForCode.remove(meta.code);
+                    activeFinalPalletForFootPosition.remove(physicalPositionForPallet(pallet));
+                }
             } else {
                 readyFinalPallets.remove(pallet);
-                validatedFinalPallets.remove(pallet);
                 refreshTendidoReadiness();
             }
             return new ActionResult(true, meta.position,

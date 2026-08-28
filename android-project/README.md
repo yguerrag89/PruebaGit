@@ -1,6 +1,10 @@
-# Ilubox WMS PDA V0.9 — escaneo individual estricto
+# Ilubox WMS PDA V0.10 — operador continuo
 
 Aplicación Android offline para la AUTOID Q9. Recibe de Windows un manifiesto de descarga, valida cada caja individual, asigna su tarima definitiva y devuelve un resultado que Windows puede convertir en la plantilla oficial del WMS.
+
+## Instalación de prueba
+
+El APK instala **Ilubox PDA V0.10** junto a V0.9 (`com.ilubox.descargapda.v010`). No desinstalar V0.9: sus datos permanecen en la aplicación anterior. V0.10 no copia su sesión abierta; importar el manifiesto para comenzar una nueva prueba. El APK está firmado para depuración/piloto, no como distribución de producción.
 
 ## Flujo principal
 
@@ -9,8 +13,11 @@ Aplicación Android offline para la AUTOID Q9. Recibe de Windows un manifiesto d
 3. Inicia en modo **TRASLADO**, que queda preseleccionado.
 4. Escanea la etiqueta individual de cada caja.
 5. La pantalla muestra la tarima definitiva `T-xx`; para códigos pequeños también muestra `TR-xx`.
-6. En Supervisor, valida las definitivas y usa **EXPORTAR RESULTADO PARA WINDOWS**.
-7. Copia `resultado_PDA_<contenedor>.json` a Windows.
+6. Cuando sustituya físicamente la TR, pulse **CAMBIAR TRASLADO** y continúe capturando. No hay confirmación por cada distribución.
+7. Abra **TARIMAS**, consulte el desglose y los Uxx bajo demanda. Pulse **OPERAR TARIMA → VERIFICAR CONTENIDO** solo después de comprobar físicamente las cajas; registre nombre/iniciales.
+8. Después de retirarla físicamente, pulse **RETIRADA / POSICIÓN LIBRE**. Verificar no libera automáticamente el espacio.
+9. Si no hay espacio y ninguna directa está completa, use **CERRAR PARCIAL** con motivo; conserve las cajas pendientes y luego verifique y retire.
+10. En Supervisor, use **EXPORTAR RESULTADO PARA WINDOWS** y copie `resultado_PDA_<contenedor>.json` a Windows V0.10.
 
 ## Validación estricta
 
@@ -20,13 +27,14 @@ Aplicación Android offline para la AUTOID Q9. Recibe de Windows un manifiesto d
 - Se bloquean duplicados, números fuera de rango, códigos desconocidos y lecturas ambiguas.
 - Un código con una sola caja puede leerse como código base y se normaliza a `U001`.
 - Los códigos grandes toman dinámicamente una tarima activa y una posición libre al pie; el orden de llegada de `Uxxx` no cambia esa asignación.
-- Los códigos pequeños conservan su destino `T-xx`, viajan en `TR-xx` y solo pasan a definitiva al confirmar la distribución.
+- Todos los códigos permanecen en `PENDIENTE_VERIFICAR` hasta comprobar su tarima final. Una TR puede alimentar varias T, y una T reunir varios viajes.
+- `Registradas / previstas` es el avance de esa tarima, no el total de cajas del producto.
 - El inicio muestra cuántas tarimas se deben colocar en el tendido, cuántas definitivas quedan al pie y cuántas TR se requieren.
 - Una corrección devuelve la caja a pendiente sin borrar el evento de auditoría.
 
 ## Integridad del intercambio
 
-El manifiesto contiene una huella SHA-256 del catálogo `código + cantidad`. La PDA verifica esa huella al importar y la incluye otra vez en el resultado V0.9. El JSON declara el estado físico, la distribución del traslado y la validación de cada tarima; Windows rechaza una caja no elegible para WMS.
+El manifiesto conserva la huella SHA-256 del catálogo `código + cantidad`. El resultado v3 declara contenido, cierre de viajes, comprobación por tarima, responsable, fecha y retiro. Windows concilia detalle y resúmenes, y bloquea cualquier caja no elegible. No se inventan cajas ni se omiten pendientes para desbloquear una exportación.
 
 ## Controles visibles del supervisor
 
@@ -35,19 +43,20 @@ El manifiesto contiene una huella SHA-256 del catálogo `código + cantidad`. La
 - definitivas en el tendido final;
 - traslado actual y sus destinos;
 - plan inicial de tendido, posiciones al pie y TR-01;
-- cierre y validación de tarimas directas;
-- enviar al tendido / confirmar distribución;
+- consulta compartida del contenido y del avance;
 - exportar resultado para Windows;
 - cargar una nueva descarga con confirmación previa;
 - historial CSV, reporte Excel y corrección del último escaneo.
 
 ## Operación offline y recuperación
 
-El motor y el historial se guardan en SQLite después de cada acción. La descarga se reanuda al volver a abrir la aplicación. La importación y la exportación usan el selector de archivos de Android; no requieren Wi-Fi.
+El motor y el historial se guardan juntos en una transacción SQLite. Si falla el guardado, no se muestra la lectura como aceptada; se recupera el estado anterior o se bloquea la captura. La sesión V0.10 se reanuda al abrir la misma aplicación. Importación/exportación usan el selector de archivos Android y no requieren Wi-Fi.
+
+No hay autenticación por usuario ni sincronización entre dispositivos. La comprobación de contenido es humana: sin segundo escaneo no detecta automáticamente el intercambio de dos cajas del mismo código. Una tarima verificada no equivale a rackeo confirmado ni a aceptación en XLWMS.
 
 ## Lector Q9
 
-Configura el lector como teclado/HID y agrega `Enter` como sufijo. La aplicación mantiene el foco en el campo de escaneo.
+Configura el lector como teclado/HID y agrega `Enter` como sufijo. El foco se recupera en **ESCANEAR**; en **TARIMAS** o en un diálogo la captura se pausa. Vuelva a ESCANEAR antes de leer la siguiente caja.
 
 ## Compilación
 

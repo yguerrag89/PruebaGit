@@ -1,8 +1,8 @@
-name: Build Ilubox WMS V0.9 Windows and PDA
+name: Build Ilubox WMS V0.10 Windows and PDA
 
 on:
   push:
-    branches: [ v0-9-dynamic-wms-q9 ]
+    branches: [ v0-10-operador-continuo-q9 ]
   workflow_dispatch:
 
 permissions:
@@ -25,6 +25,7 @@ jobs:
           python -B test_v22.py
           python -B test_wms_putaway.py
           python -B test_strict_pda_exchange.py
+          python -B test_continuous_exchange.py
           python -B test_streamlit_app.py
 
       - uses: actions/setup-java@v4
@@ -45,27 +46,49 @@ jobs:
       - name: Validate strict Android engine
         run: |
           mkdir -p test-bin
-          javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java
+          javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java android-project/tests/ContinuousEngineSelfTest.java
           java -cp test-bin EngineSelfTest
+          java -cp test-bin ContinuousEngineSelfTest android-project/tests/fixtures/v09-state.ser test-output/v010
+
+      - name: Validate native Android export in Windows
+        working-directory: windows-project
+        run: python -B test_continuous_exchange.py ../test-output/v010
 
       - name: Build PDA APK
         working-directory: android-project
-        run: gradle --no-daemon :app:assembleDebug
+        run: |
+          if ! gradle --no-daemon :app:assembleDebug :app:lintDebug; then
+            if [ -f app/build/reports/lint-results-debug.txt ]; then
+              sed -n '1,450p' app/build/reports/lint-results-debug.txt
+            elif [ -f app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt ]; then
+              sed -n '1,450p' app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt
+            fi
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Ilubox-v0.10-validacion-Android
+          path: android-project/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
 
       - name: Package deliverables
         run: |
-          find release -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+          git rm -f --ignore-unmatch -- release/Ilubox_WMS_PDA_v0.9_Q9.apk release/Ilubox_WMS_Windows_v0.9.zip release/SHA256SUMS.txt
           mkdir -p release
-          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/Ilubox_WMS_PDA_v0.9_Q9.apk
-          (cd windows-project && zip -qr ../release/Ilubox_WMS_Windows_v0.9.zip . \
-            -x '*/__pycache__/*' '*.pyc' 'data/sessions/*.json')
-          unzip -t release/Ilubox_WMS_PDA_v0.9_Q9.apk
-          unzip -t release/Ilubox_WMS_Windows_v0.9.zip
-          (cd release && sha256sum Ilubox_WMS_PDA_v0.9_Q9.apk Ilubox_WMS_Windows_v0.9.zip > SHA256SUMS.txt)
+          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/Ilubox_WMS_PDA_v0.10_Q9.apk
+          (cd windows-project && zip -qr ../release/Ilubox_WMS_Windows_v0.10.zip . \
+            -x '*/__pycache__/*' '*.pyc' 'data/sessions/*.json' 'data/sessions/*.tmp')
+          unzip -t release/Ilubox_WMS_PDA_v0.10_Q9.apk
+          unzip -t release/Ilubox_WMS_Windows_v0.10.zip
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose release/Ilubox_WMS_PDA_v0.10_Q9.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/Ilubox_WMS_PDA_v0.10_Q9.apk
+          (cd release && sha256sum Ilubox_WMS_PDA_v0.10_Q9.apk Ilubox_WMS_Windows_v0.10.zip > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-WMS-v0.9-Windows-y-PDA
+          name: Ilubox-WMS-v0.10-Windows-y-PDA
           path: release/
 
       - name: Publish compiled files on the branch
@@ -74,6 +97,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -Af release
           if ! git diff --cached --quiet; then
-            git commit -m "CI: agrega instalables V0.9 [skip ci]"
+            git commit -m "CI: agrega instalables V0.10 [skip ci]"
             git push
           fi

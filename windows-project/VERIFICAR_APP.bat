@@ -6,6 +6,8 @@ py -B test_wms_putaway.py
 if errorlevel 1 goto :error
 py -B test_strict_pda_exchange.py
 if errorlevel 1 goto :error
+py -B test_continuous_exchange.py
+if errorlevel 1 goto :error
 py -B test_streamlit_app.py
 if errorlevel 1 goto :error
 echo.

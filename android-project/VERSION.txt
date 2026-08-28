@@ -1,3 +1,4 @@
 Ilubox WMS PDA
-Versión: 0.9-dynamic-wms-q9
-Contrato de resultado: ilubox.pda.result.v2
+Versión: 0.10-operador-continuo-q9
+Contrato de resultado: ilubox.pda.result.v3
+Instalación paralela: com.ilubox.descargapda.v010
