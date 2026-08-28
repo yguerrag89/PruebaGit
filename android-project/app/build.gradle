@@ -12,12 +12,12 @@ android {
     compileSdk 36
 
     defaultConfig {
-        // Piloto paralelo: no exige desinstalar V0.9 ni depende de su firma debug.
-        applicationId 'com.ilubox.descargapda.v010'
+        // Piloto paralelo: conserva V0.10 y no depende de su firma debug.
+        applicationId 'com.ilubox.descargapda.v011'
         minSdk 23
         targetSdk 36
-        versionCode 12
-        versionName '0.10-operador-continuo-q9'
+        versionCode 13
+        versionName '0.11-temporal-obligatoria-q9'
     }
 
     buildTypes {

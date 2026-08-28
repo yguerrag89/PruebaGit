@@ -13,6 +13,8 @@ import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -40,6 +42,7 @@ import com.ilubox.descargapda.core.PositionCard;
 import com.ilubox.descargapda.core.Pressure;
 import com.ilubox.descargapda.core.ScanResult;
 import com.ilubox.descargapda.core.UnloadEngine;
+import com.ilubox.descargapda.core.WmsTemporaryLocation;
 import com.ilubox.descargapda.data.ManifestImporter;
 import com.ilubox.descargapda.data.PilotDatabase;
 
@@ -244,7 +247,7 @@ public class MainActivity extends ComponentActivity {
         title.setSingleLine(true);
         r.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(60, 38)));
 
-        TextView sub = tv("V0.10 · operador continuo + WMS estricto", rsp(18, 13), C_GRAY, true);
+        TextView sub = tv("V0.11 · cierre con temporal WMS", rsp(18, 13), C_GRAY, true);
         sub.setGravity(Gravity.CENTER);
         r.addView(sub, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(34, 24)));
         r.addView(spacer(compactPda() ? 8 : 24));
@@ -1771,6 +1774,8 @@ public class MainActivity extends ComponentActivity {
             top.addView(state);
             row.addView(top);
             row.addView(tv("Registradas: " + v.scanned + " · previstas: " + v.expected, rsp(16, 13), C_DARK, true));
+            String temporary = engine.wmsTemporaryForPallet(v.label);
+            if (!temporary.isEmpty()) row.addView(tv("Temporal WMS: " + temporary, rsp(14, 12), C_GREEN, true));
             if (!v.closureReason.isEmpty()) row.addView(tv("Cierre parcial · previsión inicial " + v.originalExpected, rsp(12, 10), C_ORANGE, false));
             row.setOnClickListener(x -> showFinalPalletDetail(v.label));
             LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1809,6 +1814,8 @@ public class MainActivity extends ComponentActivity {
         msg.append("\nVerificadas físicamente: ").append(selected.received);
         msg.append("\nCódigos registrados: ").append(selected.codeCount).append(" · previstos: ").append(selected.plannedCodeCount);
         msg.append("\nEstado: ").append(selected.status);
+        String temporary = engine.wmsTemporaryForPallet(label);
+        msg.append("\nTemporal WMS: ").append(temporary.isEmpty() ? "PENDIENTE DE CAPTURA" : temporary);
         if (!selected.closureReason.isEmpty()) {
             msg.append("\nCierre parcial: ").append(selected.closureReason)
                     .append(" · previsión original ").append(selected.originalExpected);
@@ -1847,7 +1854,7 @@ public class MainActivity extends ComponentActivity {
         if (engine.validatedFinalPallets.contains(pallet) && !engine.isPalletRetired(pallet)) {
             options.add("RETIRADA / POSICIÓN LIBRE");
         } else if (engine.isPalletReadyForVerification(pallet)) {
-            options.add("VERIFICAR CONTENIDO");
+            options.add("VALIDAR Y CERRAR · TEMPORAL WMS");
         } else if (engine.directCodeForPallet.containsKey(pallet)) {
             options.add("CERRAR PARCIAL");
         }
@@ -1860,7 +1867,7 @@ public class MainActivity extends ComponentActivity {
         showOperationDialog(new AlertDialog.Builder(this).setTitle("Operar " + pallet)
                 .setItems(options.toArray(new String[0]), (d, which) -> {
                     String action = options.get(which);
-                    if (action.startsWith("VERIFICAR")) showVerifyPallet(pallet);
+                    if (action.startsWith("VALIDAR")) showVerifyPallet(pallet);
                     else if (action.startsWith("CERRAR")) showPartialClosure(pallet);
                     else showReleasePallet(pallet);
                 }).setNegativeButton("Cancelar", null).create());
@@ -1885,26 +1892,52 @@ public class MainActivity extends ComponentActivity {
         LinearLayout fields = new LinearLayout(this);
         fields.setOrientation(LinearLayout.VERTICAL);
         fields.setPadding(dp(18), dp(8), dp(18), dp(8));
+        EditText temporary = new EditText(this);
+        temporary.setSingleLine(true);
+        temporary.setHint("Escanee o escriba TEMPORAL WMS (obligatoria)");
+        temporary.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        temporary.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        // El Enter del lector termina el dato; nunca confirma por sí solo el cierre.
+        temporary.setOnKeyListener((v, keyCode, event) -> keyCode == KeyEvent.KEYCODE_ENTER);
+        temporary.setOnEditorActionListener((v, actionId, event) -> true);
+        fields.addView(temporary);
+        TextView destination = tv(pallet + " · falta temporal", rsp(18, 15), C_BLUE, true);
+        fields.addView(destination);
+        temporary.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                destination.setText(pallet + " → " + WmsTemporaryLocation.normalize(s.toString()));
+            }
+            public void afterTextChanged(Editable s) {}
+        });
         EditText responsible = new EditText(this);
         responsible.setSingleLine(true);
         responsible.setHint("Nombre o iniciales del responsable");
         responsible.setText(getPreferences(MODE_PRIVATE).getString("last_verifier", ""));
         fields.addView(responsible);
         CheckBox checked = new CheckBox(this);
-        checked.setText("Revisé físicamente las cajas y coinciden con el desglose");
+        checked.setText("Revisé las cajas y la temporal corresponde a su ubicación y bodega");
         fields.addView(checked);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Verificar " + pallet)
-                .setMessage(engine.palletScannedCount(pallet) + " cajas registradas. Confirme solo después de comprobar su contenido real."
-                        + "\nNo libera la posición ni registra una ubicación WMS.")
-                .setView(fields).setNegativeButton("Cancelar", null).setPositiveButton("VERIFICAR", null).create();
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(fields);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Validar y cerrar " + pallet)
+                .setMessage(engine.palletScannedCount(pallet) + " cajas registradas. Revise el desglose y la etiqueta de la temporal."
+                        + "\nSe guarda en esta tarima, no se envía al WMS ni libera la posición. Solo se valida el formato; no su existencia en WMS.")
+                .setView(scroll).setNegativeButton("Cancelar", null).setPositiveButton("VALIDAR Y CERRAR", null).create();
         dialog.setOnShowListener(d -> {
+            if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            temporary.requestFocus();
             Button confirm = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
             confirm.setEnabled(false);
             checked.setOnCheckedChangeListener((b, value) -> confirm.setEnabled(value));
             confirm.setOnClickListener(v -> {
+                String location = temporary.getText().toString();
+                String error = WmsTemporaryLocation.error(location);
+                if (!error.isEmpty()) { temporary.setError(error); temporary.requestFocus(); return; }
                 String actor = responsible.getText().toString().trim();
                 if (actor.isEmpty() || actor.length() > 80) { responsible.setError("Indique nombre o iniciales (máximo 80)"); return; }
-                if (commitOperation("TARIMA VERIFICADA", () -> engine.validateFinalPallet(pallet, actor))) {
+                if (commitOperation("TARIMA VERIFICADA", () -> engine.validateFinalPallet(pallet, actor, location))) {
                     getPreferences(MODE_PRIVATE).edit().putString("last_verifier", actor).apply();
                     dialog.dismiss();
                 }
@@ -1918,6 +1951,7 @@ public class MainActivity extends ComponentActivity {
         showOperationDialog(new AlertDialog.Builder(this).setTitle("Retiro físico · " + pallet)
                 .setMessage("Confirme únicamente si " + pallet + " ya fue retirada"
                         + (position.isEmpty() ? " del tendido." : " y " + position + " quedó disponible para otra tarima.")
+                        + "\nTemporal WMS registrada: " + engine.wmsTemporaryForPallet(pallet)
                         + "\nLa verificación del contenido se conserva.")
                 .setNegativeButton("Todavía está aquí", null)
                 .setPositiveButton("RETIRADA / LIBRE", (d, w) -> commitOperation("TARIMA RETIRADA",

@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <application
         android:allowBackup="true"
-        android:label="Ilubox PDA V0.10"
+        android:label="Ilubox PDA V0.11"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity

@@ -1,10 +1,10 @@
-# Ilubox WMS PDA V0.10 — operador continuo
+# Ilubox WMS PDA V0.11 — temporal obligatoria
 
 Aplicación Android offline para la AUTOID Q9. Recibe de Windows un manifiesto de descarga, valida cada caja individual, asigna su tarima definitiva y devuelve un resultado que Windows puede convertir en la plantilla oficial del WMS.
 
 ## Instalación de prueba
 
-El APK instala **Ilubox PDA V0.10** junto a V0.9 (`com.ilubox.descargapda.v010`). No desinstalar V0.9: sus datos permanecen en la aplicación anterior. V0.10 no copia su sesión abierta; importar el manifiesto para comenzar una nueva prueba. El APK está firmado para depuración/piloto, no como distribución de producción.
+El APK instala **Ilubox PDA V0.11** junto a V0.10 (`com.ilubox.descargapda.v011`). No desinstalar V0.10: sus datos permanecen en la aplicación anterior. V0.11 no copia su sesión abierta; importar el manifiesto para comenzar una nueva prueba. El APK está firmado para depuración/piloto, no como distribución de producción.
 
 ## Flujo principal
 
@@ -14,10 +14,14 @@ El APK instala **Ilubox PDA V0.10** junto a V0.9 (`com.ilubox.descargapda.v010`)
 4. Escanea la etiqueta individual de cada caja.
 5. La pantalla muestra la tarima definitiva `T-xx`; para códigos pequeños también muestra `TR-xx`.
 6. Cuando sustituya físicamente la TR, pulse **CAMBIAR TRASLADO** y continúe capturando. No hay confirmación por cada distribución.
-7. Abra **TARIMAS**, consulte el desglose y los Uxx bajo demanda. Pulse **OPERAR TARIMA → VERIFICAR CONTENIDO** solo después de comprobar físicamente las cajas; registre nombre/iniciales.
+7. Abra **TARIMAS**, consulte el desglose y los Uxx bajo demanda. Pulse **OPERAR TARIMA → VALIDAR Y CERRAR · TEMPORAL WMS** solo después de comprobar físicamente las cajas. Lea o capture la temporal WMS, revise el destino mostrado, registre nombre/iniciales y confirme la revisión.
 8. Después de retirarla físicamente, pulse **RETIRADA / POSICIÓN LIBRE**. Verificar no libera automáticamente el espacio.
 9. Si no hay espacio y ninguna directa está completa, use **CERRAR PARCIAL** con motivo; conserve las cajas pendientes y luego verifique y retire.
-10. En Supervisor, use **EXPORTAR RESULTADO PARA WINDOWS** y copie `resultado_PDA_<contenedor>.json` a Windows V0.10.
+10. En Supervisor, use **EXPORTAR RESULTADO PARA WINDOWS** y copie `resultado_PDA_<contenedor>.json` a Windows V0.11. La temporal viaja en el resultado; no necesita capturarse de nuevo.
+
+El lector con sufijo Enter termina la captura del campo, pero **no cierra la tarima automáticamente**. La temporal acepta letras A–Z, números, punto, guion, barra y guion bajo; máximo 80 caracteres, iniciando por letra/número. Se normalizan mayúsculas y espacios externos; se rechazan controles, espacios internos e identificadores locales como `T-01`, `TR-01`, `I01`, `D01`. No se consulta un catálogo WMS: el responsable debe comprobar existencia y bodega. Puede haber varias tarimas en una misma temporal; no se impone exclusividad.
+
+Una vez cerrada, la temporal y el contenido quedan bloqueados. Esta variante no incluye reapertura ni corrección de una temporal cerrada. Revise el destino antes de confirmar; ante un error, detenga la exportación de esa sesión y conserve la evidencia, sin editar el JSON.
 
 ## Validación estricta
 
@@ -34,7 +38,7 @@ El APK instala **Ilubox PDA V0.10** junto a V0.9 (`com.ilubox.descargapda.v010`)
 
 ## Integridad del intercambio
 
-El manifiesto conserva la huella SHA-256 del catálogo `código + cantidad`. El resultado v3 declara contenido, cierre de viajes, comprobación por tarima, responsable, fecha y retiro. Windows concilia detalle y resúmenes, y bloquea cualquier caja no elegible. No se inventan cajas ni se omiten pendientes para desbloquear una exportación.
+El manifiesto conserva la huella SHA-256 del catálogo `código + cantidad`. El resultado v4 declara contenido, cierre de viajes, comprobación por tarima, responsable, fecha, temporal WMS y retiro. Windows concilia detalle y resúmenes, y bloquea cualquier caja no elegible. No se inventan cajas ni se omiten pendientes para desbloquear una exportación. Un estado antiguo sin temporal no se convierte en un cierre v4 válido.
 
 ## Controles visibles del supervisor
 
@@ -50,7 +54,7 @@ El manifiesto conserva la huella SHA-256 del catálogo `código + cantidad`. El 
 
 ## Operación offline y recuperación
 
-El motor y el historial se guardan juntos en una transacción SQLite. Si falla el guardado, no se muestra la lectura como aceptada; se recupera el estado anterior o se bloquea la captura. La sesión V0.10 se reanuda al abrir la misma aplicación. Importación/exportación usan el selector de archivos Android y no requieren Wi-Fi.
+El motor y el historial se guardan juntos en una transacción SQLite. Si falla el guardado, no se muestra la lectura como aceptada; se recupera el estado anterior o se bloquea la captura. La sesión V0.11 se reanuda al abrir la misma aplicación, incluidas las temporales. Importación/exportación usan el selector de archivos Android y no requieren Wi-Fi.
 
 No hay autenticación por usuario ni sincronización entre dispositivos. La comprobación de contenido es humana: sin segundo escaneo no detecta automáticamente el intercambio de dos cajas del mismo código. Una tarima verificada no equivale a rackeo confirmado ni a aceptación en XLWMS.
 

@@ -61,4 +61,22 @@ app.radio[0].set_value("🧑‍💼 Supervisor").run()
 assert not app.exception, app.exception
 assert app.get("download_button"), "Las exportaciones permanecen en Supervisor"
 
-print("OK Streamlit V0.10: consulta de tarimas para operador, exportaciones solo en Supervisor")
+native_v4 = parse_pda_result(Path("tests/fixtures/v011/v4-verified.json").read_bytes(), {r.code: r for r in continuous_records}, "CONTINUO")
+assert native_v4.ready and native_v4.schema_version == 4
+app.session_state.pda_results = {continuous_key: native_v4}
+app.session_state.wms_configs = {continuous_key: {"putaway_order": "PAS-PRUEBA", "default_location": "2B-ANTERIOR", "locations": {"T-01": "2B-ANTERIOR"}}}
+app.run()
+assert not app.exception, app.exception
+assert not any(item.label == "Ubicación WMS predeterminada" for item in app.text_input), "V4 no permite ubicación genérica"
+assert any("Temporales registradas al cerrar" in item.value for item in app.markdown)
+order = next(item for item in app.text_input if item.label.startswith("Orden Putaway"))
+order.set_value("PAS-PRUEBA").run()
+assert not app.exception, app.exception
+from core.wms_putaway import WMS_HEADERS
+previews = [table.value for table in app.dataframe if list(table.value.columns) == list(WMS_HEADERS)]
+assert previews and set(previews[-1][WMS_HEADERS[3]]) == {"2B-TMP-01", "2B-TMP-02"}, "No hereda ubicación anterior de Windows"
+assert len(previews[-1]) == 6
+app.radio[0].set_value("👷 Operador").run()
+assert not app.exception and not app.get("download_button")
+assert any("Temporal WMS registrada en PDA" in item.value for item in app.info)
+print("OK Streamlit V0.11: temporales PDA de solo lectura y sin recaptura; consulta del operador sin exportaciones")

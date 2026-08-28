@@ -1,0 +1,31 @@
+{
+  "schema":"ilubox.pda.result.v4",
+  "version":4,
+  "container_id":"CONTINUO",
+  "record_signature":"162157eab26d75163e846509b6e34552502c741a92bf1d3f68fb4a6302ec1004",
+  "exported_at":"2026-08-28T02:20:00Z",
+  "engine_version":"0.11-temporal-obligatoria",
+  "verification_model":"FINAL_PALLET_WMS_TEMPORARY",
+  "wms_location_validation":"FORMAT_ONLY",
+  "individual_sequence":{"prefix":"U","start":1,"consecutive":true,"padding":3},
+  "progress":{"received":6,"expected":6,"in_final":6,"wms_eligible":6},
+  "active_transfer":"TR-04",
+  "transfers":[
+    {"id":"TR-01","closed":true,"boxes":2,"verified_boxes":2,"status":"VERIFICADO_POR_TARIMAS"},
+    {"id":"TR-02","closed":true,"boxes":2,"verified_boxes":2,"status":"VERIFICADO_POR_TARIMAS"},
+    {"id":"TR-03","closed":true,"boxes":2,"verified_boxes":2,"status":"VERIFICADO_POR_TARIMAS"},
+    {"id":"TR-04","closed":false,"boxes":0,"verified_boxes":0,"status":"EN_FORMACION"}
+  ],
+  "pallets":[
+    {"id":"T-01","formation":"TENDIDO","physical_position":"","wms_temporary_location":"2B-TMP-01","status":"RETIRADA","expected":3,"original_expected":3,"scanned":3,"in_final":3,"validated":true,"retired":true,"closure_reason":"","verification_method":"REVISION_FISICA","verified_by":"OP-1 \"Ana\"","verified_at":"2026-08-28T02:20:00Z","verified_boxes":3},
+    {"id":"T-02","formation":"TENDIDO","physical_position":"","wms_temporary_location":"2B-TMP-02","status":"VERIFICADA","expected":3,"original_expected":3,"scanned":3,"in_final":3,"validated":true,"retired":false,"closure_reason":"","verification_method":"REVISION_FISICA","verified_by":"OP-2","verified_at":"2026-08-28T02:20:00Z","verified_boxes":3}
+  ],
+  "accepted_events":[
+    {"raw_scan":"CHICOAU001","barcode":"CHICOAU001","code":"CHICOA","box_number":1,"final_pallet":"T-01","physical_position":"","wms_temporary_location":"2B-TMP-01","transfer_pallet":"TR-01","direct_to_final":false,"transfer_closed":true,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"CHICOAU002","barcode":"CHICOAU002","code":"CHICOA","box_number":2,"final_pallet":"T-01","physical_position":"","wms_temporary_location":"2B-TMP-01","transfer_pallet":"TR-02","direct_to_final":false,"transfer_closed":true,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"CHICOAU003","barcode":"CHICOAU003","code":"CHICOA","box_number":3,"final_pallet":"T-01","physical_position":"","wms_temporary_location":"2B-TMP-01","transfer_pallet":"TR-02","direct_to_final":false,"transfer_closed":true,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"CHICOBU001","barcode":"CHICOBU001","code":"CHICOB","box_number":1,"final_pallet":"T-02","physical_position":"","wms_temporary_location":"2B-TMP-02","transfer_pallet":"TR-01","direct_to_final":false,"transfer_closed":true,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"CHICOBU002","barcode":"CHICOBU002","code":"CHICOB","box_number":2,"final_pallet":"T-02","physical_position":"","wms_temporary_location":"2B-TMP-02","transfer_pallet":"TR-03","direct_to_final":false,"transfer_closed":true,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"CHICOBU003","barcode":"CHICOBU003","code":"CHICOB","box_number":3,"final_pallet":"T-02","physical_position":"","wms_temporary_location":"2B-TMP-02","transfer_pallet":"TR-03","direct_to_final":false,"transfer_closed":true,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-28 10:00:00"}
+  ]
+}
