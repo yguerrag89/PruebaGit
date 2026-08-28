@@ -937,7 +937,7 @@ public class UnloadEngine implements Serializable {
         for (Position p : positions) {
             if (p.enabled && !p.isFree()) occupiedSide.put(p.side, occupiedSide.get(p.side) + 1);
         }
-        free.sort(new Comparator<Position>() {
+        Collections.sort(free, new Comparator<Position>() {
             @Override public int compare(Position a, Position b) {
                 int c = Integer.compare(Math.abs(a.slot - desired), Math.abs(b.slot - desired));
                 if (c != 0) return c;
@@ -1126,7 +1126,8 @@ public class UnloadEngine implements Serializable {
             out.scan = normalized;
             out.boxNumber = boxNumber;
             out.code = code;
-            out.position = positionForCode.getOrDefault(code, "");
+            String previousPosition = positionForCode.get(code);
+            out.position = previousPosition == null ? "" : previousPosition;
             out.received = received.get(code);
             out.expected = r.boxes;
             return out;

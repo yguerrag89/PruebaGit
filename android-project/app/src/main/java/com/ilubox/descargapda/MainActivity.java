@@ -1,6 +1,5 @@
 package com.ilubox.descargapda;
 
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
@@ -30,6 +29,9 @@ import android.widget.Space;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.ComponentActivity;
+import androidx.activity.OnBackPressedCallback;
+
 import com.ilubox.descargapda.core.ActionResult;
 import com.ilubox.descargapda.core.BufferCandidate;
 import com.ilubox.descargapda.core.BufferSector;
@@ -51,7 +53,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-public class MainActivity extends Activity {
+public class MainActivity extends ComponentActivity {
     private static final int REQ_IMPORT = 1201;
     private static final int REQ_EXPORT = 1202;
     private static final int REQ_EXPORT_XLSX = 1203;
@@ -85,6 +87,9 @@ public class MainActivity extends Activity {
     private boolean storageBlocked = false;
     private int operationDialogs = 0;
     private Button changeTransferButton;
+    private final OnBackPressedCallback returnToScanner = new OnBackPressedCallback(false) {
+        @Override public void handleOnBackPressed() { showOperator(); }
+    };
 
     private EditText scanInput;
     private TextView positionResult;
@@ -106,6 +111,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        getOnBackPressedDispatcher().addCallback(this, returnToScanner);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         db = new PilotDatabase(this);
         engine = db.loadEngine();
@@ -152,12 +158,10 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    @Override public void onBackPressed() {
-        if ((inSupervisor || inPalletView) && engine != null) {
-            showOperator();
-        } else {
-            super.onBackPressed();
-        }
+    @Override public void onContentChanged() {
+        super.onContentChanged();
+        // Solo interceptar regreso desde consulta/administración; en escaneo actúa el sistema.
+        if (returnToScanner != null) returnToScanner.setEnabled(engine != null && (inSupervisor || inPalletView));
     }
 
     private int dp(int v) {
@@ -1305,7 +1309,8 @@ public class MainActivity extends Activity {
             card.addView(state);
         } else {
             com.ilubox.descargapda.core.CodeRecord rec = engine.records.get(s.code);
-            int global = engine.received.getOrDefault(s.code, 0);
+            Integer registered = engine.received.get(s.code);
+            int global = registered == null ? 0 : registered;
             int expected = rec == null ? 0 : rec.boxes;
             String shortCode = s.code.length() > 12 ? s.code.substring(s.code.length() - 12) : s.code;
             TextView code = tv(shortCode, rsp(10, 8), C_DARK, true);
@@ -2122,16 +2127,11 @@ public class MainActivity extends Activity {
                         Toast.makeText(this, "No se anuló: escriba un motivo", Toast.LENGTH_LONG).show();
                         return;
                     }
-                    ActionResult a = engine.undoAcceptedBox(e.normalizedScan);
-                    if (!a.ok) {
-                        Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    db.insertSystemEvent("ESCANEO ANULADO", a.position,
-                            a.message + " · Evento original #" + e.id + " · Motivo: " + why);
-                    saveQuietly();
-                    Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
-                    showSupervisor();
+                    commitOperation("ESCANEO ANULADO", () -> {
+                        ActionResult result = engine.undoAcceptedBox(e.normalizedScan);
+                        if (result.ok) result.message += " · Evento original #" + e.id + " · Motivo: " + why;
+                        return result;
+                    });
                 })
                 .show();
     }

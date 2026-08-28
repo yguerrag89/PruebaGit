@@ -21,7 +21,6 @@ import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -314,7 +313,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
             latestByBarcode.put(barcode, event);
         }
         ArrayList<EventRow> accepted = new ArrayList<>(latestByBarcode.values());
-        Collections.sort(accepted, Comparator.comparingLong(event -> event.id));
+        Collections.sort(accepted, (a, b) -> Long.compare(a.id, b.id));
 
         ArrayList<PdaResultWriter.AcceptedScan> scans = new ArrayList<>();
         for (EventRow event : accepted) scans.add(new PdaResultWriter.AcceptedScan(event.scan,

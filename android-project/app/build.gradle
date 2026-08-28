@@ -2,6 +2,11 @@ plugins {
     id 'com.android.application'
 }
 
+dependencies {
+    // Navegación de regreso compatible con Android 6 y gestos de Android 16.
+    implementation 'androidx.activity:activity:1.12.4'
+}
+
 android {
     namespace 'com.ilubox.descargapda'
     compileSdk 36
