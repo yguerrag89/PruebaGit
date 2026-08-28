@@ -1,0 +1,28 @@
+[Unit]
+Description=ILUBOX Putaway LAN V0.12 (piloto independiente)
+After=network.target
+
+[Service]
+Type=simple
+User=ilubox-putaway
+Group=ilubox-putaway
+WorkingDirectory=/opt/ilubox-putaway/app/server-project
+EnvironmentFile=/etc/ilubox-putaway/lan.env
+ExecStart=/opt/ilubox-putaway/venv/bin/uvicorn app:create_app --factory --host 127.0.0.1 --port 8600 --workers 1 --no-proxy-headers --limit-concurrency 24 --timeout-keep-alive 5
+Restart=on-failure
+RestartSec=5
+UMask=0077
+StateDirectory=ilubox-putaway
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ilubox-putaway
+RestrictAddressFamilies=AF_UNIX AF_INET
+MemoryMax=768M
+CPUQuota=100%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

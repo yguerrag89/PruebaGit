@@ -1,0 +1,24 @@
+# TEMPLATE ONLY. Review existing nginx -T before enabling. Do not replace nginx.conf.
+# Certificate MUST include IP SAN 192.168.100.228 and be trusted by Windows/PDA.
+# No listener on 0.0.0.0, IPv6, Tailscale or the public Funnel portal.
+server {
+    listen 192.168.100.228:8443 ssl;
+    server_name 192.168.100.228;
+    ssl_certificate /etc/ilubox-putaway/tls/server.crt;
+    ssl_certificate_key /etc/ilubox-putaway/tls/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    allow 192.168.100.0/24;
+    deny all;
+    client_max_body_size 16m;
+    client_body_timeout 20s;
+    send_timeout 30s;
+    location / {
+        proxy_pass http://127.0.0.1:8600;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 40s;
+        proxy_request_buffering on;
+    }
+}

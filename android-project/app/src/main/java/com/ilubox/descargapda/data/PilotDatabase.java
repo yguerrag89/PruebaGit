@@ -32,7 +32,7 @@ import java.util.Set;
 
 public class PilotDatabase extends SQLiteOpenHelper {
     private static final String DB_NAME = "ilubox_descarga_piloto.db";
-    private static final int DB_VERSION = 3;
+    private static final int DB_VERSION = 4;
 
     public static class EventRow {
         public long id;
@@ -56,6 +56,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE session_state (id INTEGER PRIMARY KEY CHECK(id=1), container_id TEXT, engine_blob BLOB NOT NULL, updated_at TEXT)");
         db.execSQL("CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT, scan TEXT, normalized_scan TEXT, box_number INTEGER DEFAULT 0, code TEXT, position TEXT, status TEXT, message TEXT, received INTEGER, expected INTEGER, accepted INTEGER)");
+        createSync(db);
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -69,6 +70,104 @@ public class PilotDatabase extends SQLiteOpenHelper {
             // El estado serializado V0.8 no conoce validación de tarima ni asignación directa dinámica.
             db.delete("session_state", null, null);
         }
+        if (oldVersion < 4) createSync(db);
+    }
+
+    private static void createSync(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE sync_state(id INTEGER PRIMARY KEY CHECK(id=1), server TEXT NOT NULL, session_id TEXT NOT NULL, secret TEXT NOT NULL, device TEXT NOT NULL, manifest_hash TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, acknowledged INTEGER NOT NULL DEFAULT 0, sealed INTEGER NOT NULL DEFAULT 0, partial_reason TEXT NOT NULL DEFAULT '', pending BLOB)");
+    }
+
+    public org.json.JSONObject syncState() {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT server,session_id,secret,device,manifest_hash,revision,acknowledged,sealed,partial_reason FROM sync_state WHERE id=1", null)) {
+            if (!c.moveToFirst()) return null;
+            org.json.JSONObject state = new org.json.JSONObject();
+            for (int i=0;i<5;i++) state.put(c.getColumnName(i), c.getString(i));
+            state.put("revision", c.getLong(5)); state.put("acknowledged", c.getLong(6));
+            state.put("sealed", c.getInt(7) == 1); state.put("partial_reason", c.getString(8));
+            return state;
+        } catch (org.json.JSONException e) { throw new IllegalStateException(e); }
+    }
+
+    public boolean isServerSealed() {
+        org.json.JSONObject state = syncState();
+        return state != null && state.optBoolean("sealed");
+    }
+
+    public boolean canReplaceSession() {
+        org.json.JSONObject state = syncState();
+        return state == null || (state.optBoolean("sealed") && state.optLong("acknowledged") == state.optLong("revision"));
+    }
+
+    public void startBoundSession(UnloadEngine engine, org.json.JSONObject binding) throws Exception {
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            startNewSession(engine, "Descarga asignada por servidor LAN");
+            ContentValues values = new ContentValues();
+            values.put("id", 1);
+            for (String key : new String[]{"server","session_id","device","manifest_hash"}) values.put(key, binding.getString(key));
+            values.put("secret", SecretStore.encrypt(binding.getString("token")));
+            database.insertOrThrow("sync_state", null, values);
+            database.setTransactionSuccessful();
+        } finally { database.endTransaction(); }
+    }
+
+    /** Freeze locally BEFORE sending the final revision. No export race with later scans. */
+    public void sealForServer(String reason) throws Exception {
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            if (syncState() == null || isServerSealed()) throw new IllegalStateException("Descarga no disponible para cierre");
+            UnloadEngine current = loadEngine();
+            if (current == null || current.acceptedBoxCount() == 0 || current.wmsEligibleBoxCount() != current.acceptedBoxCount())
+                throw new IllegalStateException("Valide todas las tarimas con temporal WMS antes de cerrar");
+            if (current.progress()[0] != current.progress()[1] && reason.trim().length() < 8)
+                throw new IllegalStateException("Cierre parcial: escriba un motivo de al menos 8 caracteres");
+            insertSystemEvent("DESCARGA CERRADA LAN", "", reason);
+            database.execSQL("UPDATE sync_state SET sealed=1, partial_reason=?, revision=revision+1, pending=NULL WHERE id=1", new Object[]{reason});
+            database.setTransactionSuccessful();
+        } finally { database.endTransaction(); }
+    }
+
+    /** Exact bytes retained for retry after a lost ACK; export timestamp must not change. */
+    public byte[] pendingSnapshot() throws Exception {
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            org.json.JSONObject state = syncState();
+            if (state == null || state.getLong("revision") <= state.getLong("acknowledged")) return null;
+            try (Cursor cursor = database.rawQuery("SELECT pending FROM sync_state WHERE id=1", null)) {
+                if (cursor.moveToFirst() && !cursor.isNull(0)) return cursor.getBlob(0);
+            }
+            UnloadEngine saved = loadEngine();
+            if (saved == null) throw new IllegalStateException("No se pudo recuperar el estado local");
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            writePdaResultJson(output, saved);
+            org.json.JSONObject packet = new org.json.JSONObject();
+            packet.put("schema", "ilubox.sync.v1");
+            for (String key : new String[]{"session_id","manifest_hash","revision","sealed","partial_reason"}) packet.put(key, state.get(key));
+            packet.put("result", new org.json.JSONObject(output.toString(StandardCharsets.UTF_8.name())));
+            org.json.JSONArray audit = new org.json.JSONArray();
+            for (EventRow e : allEvents()) {
+                org.json.JSONObject item = new org.json.JSONObject();
+                item.put("id",e.id); item.put("time",e.time); item.put("scan",e.scan);
+                item.put("barcode",e.normalizedScan); item.put("code",e.code); item.put("position",e.position);
+                item.put("status",e.status); item.put("message",e.message); item.put("accepted",e.accepted);
+                audit.put(item);
+            }
+            packet.put("audit", audit);
+            byte[] bytes = packet.toString().getBytes(StandardCharsets.UTF_8);
+            if (bytes.length > 16*1024*1024) throw new IllegalStateException("Sincronización supera 16 MiB; conserve la PDA y avise al administrador");
+            ContentValues values = new ContentValues(); values.put("pending", bytes);
+            database.update("sync_state", values, "id=1", null);
+            database.setTransactionSuccessful();
+            return bytes;
+        } finally { database.endTransaction(); }
+    }
+
+    public void acknowledge(String session, long revision) {
+        getWritableDatabase().execSQL("UPDATE sync_state SET acknowledged=MAX(acknowledged,?) WHERE id=1 AND session_id=? AND revision>=?",
+                new Object[]{revision,session,revision});
     }
 
     private static String now() {
@@ -76,6 +175,10 @@ public class PilotDatabase extends SQLiteOpenHelper {
     }
 
     public void saveEngine(UnloadEngine engine) throws Exception {
+        if (isServerSealed()) throw new IllegalStateException("Descarga cerrada para el servidor; solo consulta");
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (ObjectOutputStream out = new ObjectOutputStream(bos)) {
             out.writeObject(engine);
@@ -87,6 +190,9 @@ public class PilotDatabase extends SQLiteOpenHelper {
         values.put("updated_at", now());
         long row = getWritableDatabase().insertWithOnConflict("session_state", null, values, SQLiteDatabase.CONFLICT_REPLACE);
         if (row < 0) throw new IllegalStateException("No se guardó la sesión");
+        database.execSQL("UPDATE sync_state SET revision=revision+1,pending=NULL WHERE id=1");
+        database.setTransactionSuccessful();
+        } finally { database.endTransaction(); }
     }
 
     /** El historial y el estado se confirman juntos: nunca mostrar OK si falla el guardado. */
@@ -111,9 +217,11 @@ public class PilotDatabase extends SQLiteOpenHelper {
     }
 
     public void startNewSession(UnloadEngine engine, String message) throws Exception {
+        if (!canReplaceSession()) throw new IllegalStateException("Primero cierre y sincronice la descarga asignada");
         SQLiteDatabase database = getWritableDatabase();
         database.beginTransaction();
         try {
+            database.delete("sync_state", null, null);
             database.delete("events", null, null);
             database.delete("session_state", null, null);
             database.execSQL("DELETE FROM sqlite_sequence WHERE name='events'");
@@ -137,9 +245,11 @@ public class PilotDatabase extends SQLiteOpenHelper {
     }
 
     public void clearSession() {
+        if (!canReplaceSession()) throw new IllegalStateException("No se puede borrar una descarga sin sincronizar");
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            db.delete("sync_state", null, null);
             db.delete("events", null, null);
             db.delete("session_state", null, null);
             db.execSQL("DELETE FROM sqlite_sequence WHERE name='events'");
@@ -150,6 +260,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
     }
 
     public void insertScanEvent(ScanResult r) {
+        if (isServerSealed()) throw new IllegalStateException("Descarga cerrada");
         ContentValues v = new ContentValues();
         v.put("time", now());
         v.put("scan", r.rawScan == null ? "" : r.rawScan);
@@ -166,6 +277,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
     }
 
     public void insertSystemEvent(String status, String position, String message) {
+        if (isServerSealed()) throw new IllegalStateException("Descarga cerrada");
         ContentValues v = new ContentValues();
         v.put("time", now());
         v.put("scan", "");

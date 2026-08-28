@@ -5,6 +5,8 @@ plugins {
 dependencies {
     // Navegación de regreso compatible con Android 6 y gestos de Android 16.
     implementation 'androidx.activity:activity:1.12.4'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.16.1'
 }
 
 android {
@@ -13,11 +15,11 @@ android {
 
     defaultConfig {
         // Piloto paralelo: conserva V0.10 y no depende de su firma debug.
-        applicationId 'com.ilubox.descargapda.v011'
+        applicationId 'com.ilubox.descargapda.v012'
         minSdk 23
         targetSdk 36
-        versionCode 13
-        versionName '0.11-temporal-obligatoria-q9'
+        versionCode 14
+        versionName '0.12-servidor-lan-q9'
     }
 
     buildTypes {
@@ -25,6 +27,7 @@ android {
             minifyEnabled false
         }
     }
+    testOptions { unitTests.includeAndroidResources = true }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

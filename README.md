@@ -1,4 +1,16 @@
-# Ilubox WMS V0.11 — Temporal WMS obligatoria · Windows + PDA Q9
+# Ilubox WMS V0.12 — Servidor LAN Ubuntu + PDA Q9
+
+Variante piloto independiente: panel del supervisor desde el navegador de Windows,
+una PDA por descarga, captura offline, sincronización por revisiones y plantilla WMS
+solo después de recibir el cierre. Conserva la validación individual y temporal
+obligatoria de V0.11. No instala nada automáticamente en el servidor de la empresa.
+
+Leer [instalación aislada, operación, límites y pruebas de aceptación](server-project/README.md).
+Paquetes generados por CI en `release/v0.12/`. La carpeta `windows-project` conserva
+la aplicación local anterior y aporta el mismo generador/validador al servidor.
+No se migran sesiones locales ni se comparte una descarga entre V0.11 y V0.12.
+
+## Referencia: versión local V0.11
 
 Esta rama contiene dos aplicaciones coordinadas:
 
