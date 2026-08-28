@@ -96,7 +96,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- release/v0.11
+          git add -f -- release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk release/v0.11/Ilubox_WMS_Windows_v0.11.zip release/v0.11/SHA256SUMS.txt
           if ! git diff --cached --quiet; then
             git commit -m "CI: agrega instalables V0.11 [skip ci]"
             git push
