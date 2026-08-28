@@ -1,0 +1,2 @@
+7c8b0874f5f6ca21e4a4652de21ed34eb0326f0054783314a45717f62ffed66f  Ilubox_WMS_PDA_v0.11_Q9.apk
+97ca5bd3fa993cd50695d33a1c4066fac7d894bd00276f240e72ba17ff2df6aa  Ilubox_WMS_Windows_v0.11.zip
