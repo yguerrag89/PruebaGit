@@ -1,8 +1,8 @@
-name: Build Ilubox WMS V0.11 Windows and PDA
+name: Build Ilubox WMS V0.12 Ubuntu LAN and PDA
 
 on:
   push:
-    branches: [ v0-11-temporal-obligatoria-q9 ]
+    branches: [ v0-12-servidor-lan-q9 ]
   workflow_dispatch:
 
 permissions:
@@ -34,6 +34,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Validate LAN server
+        working-directory: server-project
+        run: |
+          python -m pip install -r requirements.txt httpx==0.28.1
+          python -B -m unittest -v test_server
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
@@ -59,7 +65,8 @@ jobs:
       - name: Build PDA APK
         working-directory: android-project
         run: |
-          if ! gradle --no-daemon :app:assembleDebug :app:lintDebug; then
+          if ! gradle --no-daemon :app:assembleDebug :app:lintDebug :app:testDebugUnitTest; then
+            find app/build/test-results -name '*.xml' -exec sed -n '1,180p' {} \; || true
             if [ -f app/build/reports/lint-results-debug.txt ]; then
               sed -n '1,450p' app/build/reports/lint-results-debug.txt
             elif [ -f app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt ]; then
@@ -71,33 +78,38 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Ilubox-v0.11-validacion-Android
-          path: android-project/app/build/reports/lint-results-debug.*
+          name: Ilubox-v0.12-validacion-Android
+          path: |
+            android-project/app/build/reports/lint-results-debug.*
+            android-project/app/build/test-results/
           if-no-files-found: ignore
+
+      - name: Validate native SQLite outbox in server
+        working-directory: server-project
+        run: python -B test_native_sync.py ../android-project/app/build/lan-fixtures
 
       - name: Package deliverables
         run: |
-          mkdir -p release/v0.11
-          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk
-          (cd windows-project && zip -qr ../release/v0.11/Ilubox_WMS_Windows_v0.11.zip . \
-            -x '*/__pycache__/*' '*.pyc' 'data/sessions/*.json' 'data/sessions/*.tmp')
-          unzip -t release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk
-          unzip -t release/v0.11/Ilubox_WMS_Windows_v0.11.zip
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk
-          (cd release/v0.11 && sha256sum Ilubox_WMS_PDA_v0.11_Q9.apk Ilubox_WMS_Windows_v0.11.zip > SHA256SUMS.txt)
+          mkdir -p release/v0.12
+          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/v0.12/Ilubox_WMS_PDA_v0.12_Q9.apk
+          python scripts/package_v012.py
+          unzip -t release/v0.12/Ilubox_WMS_PDA_v0.12_Q9.apk
+          unzip -t release/v0.12/Ilubox_WMS_Ubuntu_v0.12.zip
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose release/v0.12/Ilubox_WMS_PDA_v0.12_Q9.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/v0.12/Ilubox_WMS_PDA_v0.12_Q9.apk
+          (cd release/v0.12 && sha256sum Ilubox_WMS_PDA_v0.12_Q9.apk Ilubox_WMS_Ubuntu_v0.12.zip > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-WMS-v0.11-Windows-y-PDA
-          path: release/v0.11/
+          name: Ilubox-WMS-v0.12-Ubuntu-y-PDA
+          path: release/v0.12/
 
       - name: Publish compiled files on the branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f -- release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk release/v0.11/Ilubox_WMS_Windows_v0.11.zip release/v0.11/SHA256SUMS.txt
+          git add -f -- release/v0.12/Ilubox_WMS_PDA_v0.12_Q9.apk release/v0.12/Ilubox_WMS_Ubuntu_v0.12.zip release/v0.12/SHA256SUMS.txt
           if ! git diff --cached --quiet; then
-            git commit -m "CI: agrega instalables V0.11 [skip ci]"
+            git commit -m "CI: agrega paquetes V0.12 LAN [skip ci]"
             git push
           fi

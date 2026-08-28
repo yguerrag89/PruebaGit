@@ -45,6 +45,11 @@ import com.ilubox.descargapda.core.UnloadEngine;
 import com.ilubox.descargapda.core.WmsTemporaryLocation;
 import com.ilubox.descargapda.data.ManifestImporter;
 import com.ilubox.descargapda.data.PilotDatabase;
+import com.ilubox.descargapda.data.LanClient;
+import com.ilubox.descargapda.data.SecretStore;
+import org.json.JSONObject;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -79,6 +84,15 @@ public class MainActivity extends ComponentActivity {
     private static final int C_LIGHT_ORANGE = Color.rgb(255, 237, 213);
 
     private PilotDatabase db;
+    private final android.os.Handler syncHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final java.util.concurrent.ExecutorService syncExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private boolean syncBusy = false;
+    private boolean destroyed = false;
+    private String syncMessage = "Pendiente de envío";
+    private TextView syncStatus;
+    private final Runnable syncTick = new Runnable() {
+        @Override public void run() { synchronizeLan(); syncHandler.postDelayed(this, 10000); }
+    };
     private UnloadEngine engine;
     private ManifestImporter.ManifestData pendingManifest;
     private ToneGenerator tones;
@@ -124,6 +138,9 @@ public class MainActivity extends ComponentActivity {
     }
 
     @Override protected void onDestroy() {
+        destroyed = true;
+        syncHandler.removeCallbacks(syncTick);
+        syncExecutor.shutdownNow();
         if (tones != null) tones.release();
         db.close();
         super.onDestroy();
@@ -131,7 +148,149 @@ public class MainActivity extends ComponentActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        syncHandler.removeCallbacks(syncTick);
+        syncHandler.post(syncTick);
         focusScanner();
+    }
+
+    @Override protected void onPause() {
+        syncHandler.removeCallbacks(syncTick);
+        super.onPause();
+    }
+
+    private void refreshSyncStatus() {
+        if (syncStatus == null || db == null) return;
+        JSONObject state = db.syncState();
+        if (state == null) { syncStatus.setText("SIN SERVIDOR · Conectar"); return; }
+        long revision = state.optLong("revision"), ack = state.optLong("acknowledged");
+        String label = ack == revision ? (state.optBoolean("sealed") ? "CIERRE RECIBIDO" : "ENVIADO AL SERVIDOR")
+                : (state.optBoolean("sealed") ? "CIERRE PENDIENTE" : "CAMBIOS PENDIENTES");
+        syncStatus.setText(label + " · " + ack + "/" + revision + " · " + syncMessage);
+    }
+
+    private void addSyncBar(LinearLayout parent) {
+        syncStatus = tv("", rsp(12, 10), C_BLUE, true);
+        syncStatus.setPadding(dp(6), dp(7), dp(6), dp(7));
+        syncStatus.setOnClickListener(v -> showLanDialog());
+        parent.addView(syncStatus);
+        refreshSyncStatus();
+    }
+
+    private void synchronizeLan() {
+        if (syncBusy || destroyed || db == null || db.syncState() == null) return;
+        syncBusy = true;
+        syncExecutor.execute(() -> {
+            String message = "Sin cambios pendientes";
+            try (PilotDatabase local = new PilotDatabase(getApplicationContext())) {
+                byte[] bytes = local.pendingSnapshot();
+                JSONObject state = local.syncState();
+                if (bytes != null && state != null) {
+                    JSONObject packet = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+                    JSONObject response = LanClient.request(state.getString("server"), state.getString("session_id"),
+                            SecretStore.decrypt(state.getString("secret")), state.getString("device"), "snapshot", bytes);
+                    StringBuilder hash = new StringBuilder();
+                    for (byte b : MessageDigest.getInstance("SHA-256").digest(bytes)) hash.append(String.format(Locale.ROOT, "%02x", b & 255));
+                    if (response.getLong("revision") != packet.getLong("revision") || !response.getString("sha256").equals(hash.toString())
+                            || response.getBoolean("sealed") != packet.getBoolean("sealed"))
+                        throw new IllegalStateException("Respuesta no corresponde al envío; no se confirmó");
+                    local.acknowledge(state.getString("session_id"), packet.getLong("revision"));
+                    message = "Último envío confirmado";
+                }
+            } catch (Exception e) {
+                message = "Sin confirmar: " + (e.getMessage() == null ? "revise Wi-Fi / certificado" : e.getMessage());
+            }
+            final String result = message;
+            runOnUiThread(() -> { if (!destroyed) { syncBusy = false; syncMessage = result; refreshSyncStatus(); } });
+        });
+    }
+
+    private void showLanDialog() {
+        JSONObject state = db.syncState();
+        if (state == null || db.canReplaceSession()) {
+            showLanConnect();
+            return;
+        }
+        showOperationDialog(new AlertDialog.Builder(this).setTitle("SERVIDOR LAN")
+                .setMessage(state.optString("server") + "\nRevisión confirmada: " + state.optLong("acknowledged")
+                        + " / " + state.optLong("revision") + "\n" + syncMessage
+                        + "\n\nLa captura sigue disponible sin Wi-Fi. No borre los datos de la aplicación.")
+                .setNegativeButton("Volver", null)
+                .setNeutralButton("SINCRONIZAR", (d,w) -> synchronizeLan())
+                .setPositiveButton(state.optBoolean("sealed") ? "REINTENTAR CIERRE" : "CERRAR DESCARGA",
+                        (d,w) -> { if (state.optBoolean("sealed")) synchronizeLan(); else showLanSeal(); }).create());
+    }
+
+    private void showLanSeal() {
+        EditText reason = new EditText(this);
+        reason.setHint("Motivo si faltan cajas (mínimo 8 caracteres)");
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Cerrar descarga para WMS")
+                .setMessage("Todas las cajas escaneadas deben estar verificadas con temporal WMS. Después del cierre no podrá escanear, anular ni modificar esta descarga.\n\n¿Terminó la operación física?")
+                .setView(reason).setNegativeButton("Continuar descarga", null).setPositiveButton("CERRAR Y ENVIAR", null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            try {
+                db.sealForServer(reason.getText().toString().trim());
+                dialog.dismiss(); refreshOperationScreen(); synchronizeLan();
+            } catch (Exception e) { Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show(); }
+        }));
+        showOperationDialog(dialog);
+    }
+
+    private void showLanConnect() {
+        if (!db.canReplaceSession()) { Toast.makeText(this,"Primero cierre y sincronice la descarga actual",Toast.LENGTH_LONG).show(); return; }
+        if (engine != null && db.syncState() == null && engine.acceptedBoxCount() > 0) {
+            Toast.makeText(this,"La sesión local contiene cajas. Exporte y conserve sus resultados antes de iniciar una nueva prueba de servidor",Toast.LENGTH_LONG).show();
+            return;
+        }
+        LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(dp(16),dp(8),dp(16),dp(8));
+        EditText server = new EditText(this); server.setHint("https://servidor:8443"); server.setSingleLine(true);
+        server.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        EditText pairing = new EditText(this); pairing.setHint("Código de asignación del supervisor"); pairing.setSingleLine(true);
+        pairing.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        form.addView(server); form.addView(pairing);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Conectar descarga del servidor")
+                .setMessage("Requiere HTTPS y certificado confiable instalado en la PDA. La V0.11 permanece independiente.")
+                .setView(form).setNegativeButton("Cancelar", null).setPositiveButton("CONECTAR", null).create();
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (syncBusy) { Toast.makeText(this,"Espere el envío actual",Toast.LENGTH_SHORT).show(); return; }
+            try {
+                String address = LanClient.origin(server.getText().toString());
+                String[] parts = pairing.getText().toString().trim().split("\\.", 2);
+                if (parts.length != 2 || !parts[0].matches("[a-f0-9-]{36}") || !parts[1].matches("[A-Za-z0-9_-]{32}"))
+                    throw new IllegalArgumentException("Copie el código de asignación completo");
+                android.content.SharedPreferences prefs = getSharedPreferences("lan_device", MODE_PRIVATE);
+                String device = prefs.getString("id", "");
+                if (device.isEmpty()) { device = java.util.UUID.randomUUID().toString(); if (!prefs.edit().putString("id",device).commit()) throw new IllegalStateException("No se guardó la identidad PDA"); }
+                final String deviceId = device;
+                syncBusy = true;
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                syncExecutor.execute(() -> {
+                    try {
+                        JSONObject response = LanClient.request(address, parts[0], parts[1], deviceId, "claim", new byte[0]);
+                        if (!parts[0].equals(response.getString("session_id")) || response.getLong("revision") != 0)
+                            throw new IllegalStateException("Esta descarga ya tiene datos: conserve la PDA original; no se permite reiniciarla");
+                        ManifestImporter.ManifestData manifest = ManifestImporter.parse(new java.io.ByteArrayInputStream(response.getJSONObject("manifest").toString().getBytes(StandardCharsets.UTF_8)));
+                        UnloadEngine candidate = new UnloadEngine(manifest.containerId, manifest.records, manifest.settings,
+                                response.getInt("left"),response.getInt("right"),"TRASLADO",4);
+                        JSONObject binding = new JSONObject(); binding.put("server",address); binding.put("session_id",parts[0]);
+                        binding.put("token",parts[1]); binding.put("device",deviceId); binding.put("manifest_hash",response.getString("manifest_hash"));
+                        runOnUiThread(() -> {
+                            if (destroyed) return;
+                            syncBusy = false; dialog.dismiss();
+                            showOperationDialog(new AlertDialog.Builder(this).setTitle("Preparar " + candidate.containerId)
+                                    .setMessage("Tendido: " + candidate.plannedTendidoPalletCount() + " tarimas\nAl pie: " + candidate.initialDirectFootPalletCount()
+                                            + " definitivas + 1 TR\n\nConfirme que esta es la descarga asignada.")
+                                    .setNegativeButton("Cancelar",null).setPositiveButton("INICIAR",(a,b) -> {
+                                        try { db.startBoundSession(candidate,binding); engine=candidate; storageBlocked=false; showOperator(); synchronizeLan(); }
+                                        catch (Exception e) { Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show(); }
+                                    }).create());
+                        });
+                    } catch (Exception e) {
+                        runOnUiThread(() -> { if (!destroyed) { syncBusy=false; dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true); Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show(); } });
+                    }
+                });
+            } catch (Exception e) { Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show(); }
+        }));
+        showOperationDialog(dialog);
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
@@ -247,7 +406,7 @@ public class MainActivity extends ComponentActivity {
         title.setSingleLine(true);
         r.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(60, 38)));
 
-        TextView sub = tv("V0.11 · cierre con temporal WMS", rsp(18, 13), C_GRAY, true);
+        TextView sub = tv("V0.12 · servidor LAN + temporal WMS", rsp(18, 13), C_GRAY, true);
         sub.setGravity(Gravity.CENTER);
         r.addView(sub, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(34, 24)));
         r.addView(spacer(compactPda() ? 8 : 24));
@@ -261,6 +420,10 @@ public class MainActivity extends ComponentActivity {
         intro.setBackground(box(Color.WHITE, C_BORDER, 12));
         r.addView(intro, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         r.addView(spacer(compactPda() ? 10 : 22));
+
+        Button lan = button("SERVIDOR · CONECTAR DESCARGA", C_GREEN, Color.WHITE);
+        lan.setOnClickListener(v -> showLanDialog());
+        r.addView(lan);
 
         Button importBtn = button(compactPda() ? "📂  IMPORTAR .JSON" : "📂  IMPORTAR DESCARGA (.json)", C_BLUE, Color.WHITE);
         importBtn.setOnClickListener(v -> chooseManifest());
@@ -284,6 +447,7 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void chooseManifest() {
+        if (!db.canReplaceSession()) { showLanDialog(); return; }
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("application/json");
@@ -292,6 +456,7 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void loadDemo() {
+        if (!db.canReplaceSession()) { showLanDialog(); return; }
         try (InputStream in = getAssets().open("demo_descarga.json")) {
             pendingManifest = ManifestImporter.parse(in);
             applyRecommendedBufferPlan();
@@ -617,6 +782,7 @@ public class MainActivity extends ComponentActivity {
         tabs.addView(list, new LinearLayout.LayoutParams(0, rh(44, 38), 1f));
         screen.addView(spacer(4));
         screen.addView(tabs);
+        addSyncBar(screen);
         progressText = tv("", rsp(18, 15), C_DARK, true);
         progressText.setGravity(Gravity.CENTER);
         int[] progress = engine.progress();
@@ -643,7 +809,7 @@ public class MainActivity extends ComponentActivity {
         scanInput.setSingleLine(true);
         scanInput.setTextSize(rsp(20, 17));
         scanInput.setHint(storageBlocked ? "CAPTURA BLOQUEADA: REVISAR GUARDADO" : "ESCANEAR CAJA");
-        scanInput.setEnabled(!storageBlocked);
+        scanInput.setEnabled(!storageBlocked && !db.isServerSealed());
         scanInput.setGravity(Gravity.CENTER);
         scanInput.setBackground(box(Color.WHITE, C_BLUE, 10));
         scanInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
@@ -860,7 +1026,7 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void processScan() {
-        if (scanInput == null || engine == null || inSupervisor || inPalletView || operationDialogs > 0 || storageBlocked) return;
+        if (scanInput == null || engine == null || inSupervisor || inPalletView || operationDialogs > 0 || storageBlocked || db.isServerSealed()) return;
         String raw = scanInput.getText().toString();
         scanInput.setText("");
         if (raw.trim().isEmpty()) { scanInput.requestFocus(); return; }
@@ -1104,7 +1270,7 @@ public class MainActivity extends ComponentActivity {
         }
         refreshPendingReady();
         if (changeTransferButton != null && engine.isTransferMode()) {
-            changeTransferButton.setEnabled(!storageBlocked && engine.currentTransferBoxCount() > 0);
+            changeTransferButton.setEnabled(!storageBlocked && !db.isServerSealed() && engine.currentTransferBoxCount() > 0);
         }
         refreshMap();
         refreshRecent();
@@ -1638,6 +1804,7 @@ public class MainActivity extends ComponentActivity {
         scanInput = null;
         changeTransferButton = null;
         LinearLayout screen = root();
+        addSyncBar(screen);
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -1996,6 +2163,7 @@ public class MainActivity extends ComponentActivity {
     private interface EngineOperation { ActionResult run(); }
 
     private boolean commitOperation(String event, EngineOperation operation) {
+        if (db.isServerSealed()) { Toast.makeText(this, "Descarga cerrada: solo consulta", Toast.LENGTH_LONG).show(); return false; }
         if (storageBlocked) { Toast.makeText(this, "Operación bloqueada por fallo de guardado", Toast.LENGTH_LONG).show(); return false; }
         ActionResult result = operation.run();
         if (!result.ok) { Toast.makeText(this, result.message, Toast.LENGTH_LONG).show(); return false; }
@@ -2100,6 +2268,8 @@ public class MainActivity extends ComponentActivity {
         row.addView(lbl, new LinearLayout.LayoutParams(0, rh(52, 40), 1f));
         Button minus = button("−", C_DISABLED, C_DARK);
         Button plus = button("+", C_GREEN, Color.WHITE);
+        minus.setEnabled(!db.isServerSealed());
+        plus.setEnabled(!db.isServerSealed());
         minus.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle("Deshabilitar posición")
                 .setMessage("Solo se deshabilitará la última posición libre del lado " + side + ". ¿Continuar?")
