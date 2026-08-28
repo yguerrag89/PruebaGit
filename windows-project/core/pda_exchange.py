@@ -10,7 +10,8 @@ from .strict_scan import canonical_scan, parse_strict_scan, record_signature
 
 
 PDA_MANIFEST_SCHEMA = "ilubox.pda.manifest.v2"
-PDA_RESULT_SCHEMA = "ilubox.pda.result.v2"
+PDA_RESULT_SCHEMA = "ilubox.pda.result.v3"
+V2_PDA_RESULT_SCHEMA = "ilubox.pda.result.v2"
 LEGACY_PDA_RESULT_SCHEMA = "ilubox.pda.result.v1"
 
 
@@ -23,6 +24,8 @@ class PdaImportResult:
     exported_at: str = ""
     engine_version: str = ""
     schema_version: int = 0
+    pallets: list[dict] = field(default_factory=list)
+    transfers: list[dict] = field(default_factory=list)
 
     @property
     def eligible_events(self) -> list[dict]:
@@ -87,13 +90,15 @@ def parse_pda_result(
         result.errors.append("El resultado PDA debe contener un objeto JSON.")
         return result
     supplied_schema = payload.get("schema")
-    is_v2 = supplied_schema == PDA_RESULT_SCHEMA and payload.get("version") == 2
+    is_v3 = supplied_schema == PDA_RESULT_SCHEMA and type(payload.get("version")) is int and payload.get("version") == 3
+    is_v2 = supplied_schema == V2_PDA_RESULT_SCHEMA and payload.get("version") == 2
     is_legacy = supplied_schema == LEGACY_PDA_RESULT_SCHEMA and payload.get("version", 1) == 1
-    if not is_v2 and not is_legacy:
+    has_physical_state = is_v2 or is_v3
+    if not has_physical_state and not is_legacy:
         result.errors.append("El archivo no es un resultado PDA compatible con esta versión.")
-    result.schema_version = 2 if is_v2 else (1 if is_legacy else 0)
+    result.schema_version = 3 if is_v3 else (2 if is_v2 else (1 if is_legacy else 0))
 
-    if is_v2:
+    if has_physical_state:
         sequence = payload.get("individual_sequence")
         if not isinstance(sequence, dict) or not (
             str(sequence.get("prefix", "")).upper() == "U"
@@ -123,9 +128,9 @@ def parse_pda_result(
         result.errors.append("El resultado PDA no contiene la lista de cajas aceptadas.")
         return result
 
-    pallet_payload = payload.get("pallets", []) if is_v2 else []
+    pallet_payload = payload.get("pallets", []) if has_physical_state else []
     pallet_states: dict[str, dict] = {}
-    if is_v2:
+    if has_physical_state:
         if not isinstance(pallet_payload, list):
             result.errors.append("El resultado PDA no contiene un resumen válido de tarimas.")
             pallet_payload = []
@@ -148,18 +153,31 @@ def parse_pda_result(
         if not isinstance(item, dict):
             result.errors.append(f"Registro PDA {index}: formato inválido.")
             continue
+        if is_v3 and any(type(item.get(key)) is not bool for key in (
+            "direct_to_final", "transfer_closed", "final_pallet_validated", "wms_eligible"
+        )):
+            result.errors.append(f"Registro PDA {index}: los controles de estado deben ser booleanos explícitos.")
+            continue
         raw_barcode = item.get("barcode") or item.get("normalized_barcode") or item.get("raw_scan")
         parsed = parse_strict_scan(raw_barcode, canonical_records)
         if not parsed.valid:
             result.errors.append(f"Registro PDA {index}: {parsed.message}")
             continue
+        if is_v3:
+            if raw_barcode != parsed.normalized_barcode or type(item.get("box_number")) is not int:
+                result.errors.append(f"Registro PDA {index}: barcode normalizado o número de caja inválido.")
+                continue
+            raw_identity = parse_strict_scan(item.get("raw_scan", ""), canonical_records)
+            if not raw_identity.valid or raw_identity.normalized_barcode != parsed.normalized_barcode:
+                result.errors.append(f"Registro PDA {index}: la lectura original no corresponde al código individual declarado.")
+                continue
         if parsed.normalized_barcode in seen:
             result.errors.append(f"Registro PDA {index}: {parsed.normalized_barcode} está duplicado.")
             continue
         seen.add(parsed.normalized_barcode)
 
         supplied_code = canonical_scan(item.get("code", ""))
-        if supplied_code and supplied_code != parsed.code:
+        if (supplied_code or is_v3) and supplied_code != parsed.code:
             result.errors.append(
                 f"Registro PDA {index}: el código declarado no coincide con {parsed.normalized_barcode}."
             )
@@ -194,12 +212,15 @@ def parse_pda_result(
         pallet_validated = False
         eligible = False
         transfer_distributed = False
-        if is_v2:
+        pallet_summary = {}
+        transfer_closed = False
+        if has_physical_state:
             physical_state = canonical_scan(item.get("physical_state", ""))
-            if physical_state not in {"EN_TRASLADO", "EN_DEFINITIVA"}:
+            valid_states = {"PENDIENTE_VERIFICAR", "EN_DEFINITIVA"} if is_v3 else {"EN_TRASLADO", "EN_DEFINITIVA"}
+            if physical_state not in valid_states:
                 result.errors.append(f"Registro PDA {index}: estado físico inválido.")
                 continue
-            transfer_distributed = item.get("transfer_distributed") is True
+            transfer_distributed = is_v2 and item.get("transfer_distributed") is True
             pallet_validated = item.get("final_pallet_validated") is True
             declared_eligible = item.get("wms_eligible") is True
             calculated_eligible = physical_state == "EN_DEFINITIVA" and pallet_validated
@@ -213,7 +234,7 @@ def parse_pda_result(
             if not direct and not transfer:
                 result.errors.append(f"Registro PDA {index}: falta la tarima de traslado.")
                 continue
-            if not direct and physical_state == "EN_DEFINITIVA" and not transfer_distributed:
+            if is_v2 and not direct and physical_state == "EN_DEFINITIVA" and not transfer_distributed:
                 result.errors.append(f"Registro PDA {index}: {transfer} no fue confirmada como distribuida.")
                 continue
             pallet_summary = pallet_states.get(pallet)
@@ -231,6 +252,17 @@ def parse_pda_result(
             if summary_position != physical_position:
                 result.errors.append(f"Registro PDA {index}: posición física de {pallet} inconsistente.")
                 continue
+            if is_v3:
+                transfer_closed = item.get("transfer_closed") is True
+                if (physical_state == "EN_DEFINITIVA") != pallet_validated:
+                    result.errors.append(f"Registro PDA {index}: solo una tarima verificada confirma presencia física.")
+                    continue
+                if direct and transfer_closed:
+                    result.errors.append(f"Registro PDA {index}: una directa no cierra un traslado.")
+                    continue
+                if not direct and pallet_validated and not transfer_closed:
+                    result.errors.append(f"Registro PDA {index}: una caja de la TR activa no puede verificarse.")
+                    continue
         code_counts[parsed.code] = code_counts.get(parsed.code, 0) + 1
         result.events.append({
             "N": len(result.events) + 1,
@@ -249,12 +281,21 @@ def parse_pda_result(
             "Posición física": physical_position,
             "Estado físico": physical_state,
             "Traslado distribuido": transfer_distributed,
+            "Traslado cerrado": transfer_closed,
             "Tarima validada": pallet_validated,
+            "Tarima retirada": pallet_summary.get("retired") is True,
+            "Verificado por": str(pallet_summary.get("verified_by", "")),
+            "Fecha verificación": str(pallet_summary.get("verified_at", "")),
+            "Método verificación": str(pallet_summary.get("verification_method", "")),
+            "Modelo verificación": "FINAL_PALLET" if is_v3 else "LEGACY_V2" if is_v2 else "SIN_CONFIRMACION",
             "Elegible WMS": eligible,
             "Caja individual": True,
         })
 
     expected_total = sum(int(getattr(record, "boxes", 0)) for record in canonical_records.values())
+    result.pallets = list(pallet_states.values())
+    if is_v3:
+        _validate_v3_summary(payload, pallet_states, result, expected_total)
     if result.events and len(result.events) < expected_total:
         result.warnings.append(
             f"Resultado parcial: {len(result.events)} de {expected_total} cajas esperadas."
@@ -274,6 +315,148 @@ def parse_pda_result(
     result.exported_at = str(payload.get("exported_at", ""))
     result.engine_version = str(payload.get("engine_version", ""))
     return result
+
+
+def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImportResult, expected_total: int) -> None:
+    """Conciliar el detalle individual con tarimas, viajes y avance; fallar sin omitir diferencias."""
+    if payload.get("verification_model") != "FINAL_PALLET":
+        result.errors.append("El resultado v3 no declara verificación física por tarima final.")
+
+    def count(value: object) -> bool:
+        return type(value) is int and value >= 0
+
+    def clean_text(value: object, limit: int) -> bool:
+        return isinstance(value, str) and len(value) <= limit and not re.search(r"[\x00-\x1f\x7f]", value)
+
+    grouped: dict[str, list[dict]] = {}
+    for event in result.events:
+        grouped.setdefault(event["Tarima"], []).append(event)
+    occupied: set[str] = set()
+    legacy_proofs = 0
+    for pallet_id, pallet in pallets.items():
+        prefix = f"Tarima {pallet_id}: "
+        numeric_fields = ("expected", "original_expected", "scanned", "in_final", "verified_boxes")
+        if not all(count(pallet.get(key)) for key in numeric_fields):
+            result.errors.append(prefix + "cantidades inválidas o ausentes.")
+            continue
+        if type(pallet.get("validated")) is not bool or type(pallet.get("retired")) is not bool:
+            result.errors.append(prefix + "verificación y retiro deben ser booleanos explícitos.")
+            continue
+        expected = pallet["expected"]
+        scanned = pallet["scanned"]
+        original = pallet["original_expected"]
+        verified = pallet["validated"]
+        retired = pallet["retired"]
+        items = grouped.get(pallet_id, [])
+        actual_final = sum(event["Estado físico"] == "EN_DEFINITIVA" for event in items)
+        if expected <= 0 or scanned > expected or original < expected:
+            result.errors.append(prefix + "previsión y captura son incompatibles.")
+        if scanned != len(items) or pallet["in_final"] != actual_final:
+            result.errors.append(prefix + "el resumen no coincide con el detalle de cajas.")
+        if verified and (scanned == 0 or scanned != expected or actual_final != scanned):
+            result.errors.append(prefix + "no puede verificarse con captura incompleta o cajas sin confirmar.")
+        if retired and not verified:
+            result.errors.append(prefix + "no puede retirarse sin verificación.")
+        expected_status = ("RETIRADA" if retired else "VERIFICADA" if verified else "PREPARAR"
+                           if scanned == 0 else "REVISAR" if scanned >= expected else "EN FORMACIÓN")
+        if pallet.get("status") != expected_status:
+            result.errors.append(prefix + "estado de tarima inconsistente.")
+        formation = pallet.get("formation")
+        position = pallet.get("physical_position")
+        if not isinstance(formation, str) or formation not in {"PIE", "TENDIDO"} or not isinstance(position, str):
+            result.errors.append(prefix + "formación o posición inválida.")
+        elif formation == "PIE":
+            if not re.fullmatch(r"[ID](?:0[1-9]|10)", position):
+                result.errors.append(prefix + "posición al pie inválida.")
+            if scanned > 0 and not retired:
+                if position in occupied:
+                    result.errors.append(prefix + "la posición al pie está ocupada por otra tarima activa.")
+                occupied.add(position)
+        elif position:
+            result.errors.append(prefix + "no debe confundir el tendido con una posición al pie.")
+        reason = pallet.get("closure_reason")
+        if not clean_text(reason, 160):
+            result.errors.append(prefix + "motivo de cierre inválido.")
+        elif original > expected and (not reason.strip() or formation != "PIE"):
+            result.errors.append(prefix + "la reducción del objetivo requiere cierre parcial directo y motivo.")
+        elif reason and original == expected:
+            result.errors.append(prefix + "el cierre parcial no conserva la previsión original.")
+
+        method = pallet.get("verification_method")
+        actor = pallet.get("verified_by")
+        time = pallet.get("verified_at")
+        if not all(clean_text(value, limit) for value, limit in ((method, 40), (actor, 80), (time, 80))):
+            result.errors.append(prefix + "datos de verificación inválidos.")
+            continue
+        if not verified:
+            if method or actor or time or pallet["verified_boxes"] != 0:
+                result.errors.append(prefix + "declara datos de verificación sin estar verificada.")
+        elif pallet["verified_boxes"] != scanned:
+            result.errors.append(prefix + "la verificación no cubre exactamente su contenido.")
+        elif method == "LEGADO_V09":
+            legacy_proofs += 1
+            if actor or time:
+                result.errors.append(prefix + "una verificación heredada no debe inventar responsable ni fecha.")
+        elif method == "REVISION_FISICA":
+            if not actor.strip():
+                result.errors.append(prefix + "falta el responsable de la revisión física.")
+            try:
+                parsed_time = datetime.fromisoformat(time.replace("Z", "+00:00"))
+                if parsed_time.tzinfo is None:
+                    raise ValueError("sin zona horaria")
+            except ValueError:
+                result.errors.append(prefix + "fecha de verificación inválida o sin zona horaria.")
+        else:
+            result.errors.append(prefix + "falta una prueba de verificación reconocida.")
+
+    if legacy_proofs:
+        result.warnings.append(f"{legacy_proofs} tarima(s) conservan una validación V0.9 sin responsable/fecha registrados; no es una nueva revisión física.")
+
+    active = payload.get("active_transfer")
+    if not isinstance(active, str) or not re.fullmatch(r"TR-\d{2,4}", active):
+        result.errors.append("El traslado activo tiene un identificador inválido.")
+    transfer_items = payload.get("transfers")
+    if not isinstance(transfer_items, list):
+        result.errors.append("Falta el resumen de traslados v3.")
+        transfer_items = []
+    transfers: dict[str, dict] = {}
+    for item in transfer_items:
+        if not isinstance(item, dict):
+            result.errors.append("El resumen contiene un traslado inválido.")
+            continue
+        transfer_id = item.get("id")
+        if not isinstance(transfer_id, str) or not re.fullmatch(r"TR-\d{2,4}", transfer_id) or transfer_id in transfers:
+            result.errors.append("El resumen contiene un traslado sin ID válido o duplicado.")
+            continue
+        transfers[transfer_id] = item
+        if type(item.get("closed")) is not bool or not count(item.get("boxes")) or not count(item.get("verified_boxes")):
+            result.errors.append(f"Traslado {transfer_id}: controles o cantidades inválidos.")
+            continue
+        events = [event for event in result.events if event["Tarima traslado"] == transfer_id]
+        verified_count = sum(event["Elegible WMS"] for event in events)
+        if item["boxes"] != len(events) or item["verified_boxes"] != verified_count:
+            result.errors.append(f"Traslado {transfer_id}: cantidades no coinciden con sus cajas.")
+        if (transfer_id == active) == item["closed"]:
+            result.errors.append(f"Traslado {transfer_id}: solo el traslado activo puede permanecer abierto.")
+        if any(event["Traslado cerrado"] != item["closed"] for event in events):
+            result.errors.append(f"Traslado {transfer_id}: cierre inconsistente en sus cajas.")
+        status = "EN_FORMACION" if not item["closed"] else (
+            "VERIFICADO_POR_TARIMAS" if events and verified_count == len(events) else "PENDIENTE_VERIFICACION"
+        )
+        if item.get("status") != status:
+            result.errors.append(f"Traslado {transfer_id}: estado inconsistente.")
+    if not isinstance(active, str) or active not in transfers:
+        result.errors.append("El traslado activo no aparece en el resumen.")
+    if any(event["Tarima traslado"] and event["Tarima traslado"] not in transfers for event in result.events):
+        result.errors.append("Hay cajas cuyo traslado no aparece en el resumen.")
+    result.transfers = list(transfers.values())
+
+    progress = payload.get("progress")
+    required = {"received": len(result.events), "expected": expected_total,
+                "in_final": sum(event["Estado físico"] == "EN_DEFINITIVA" for event in result.events),
+                "wms_eligible": len(result.eligible_events)}
+    if not isinstance(progress, dict) or any(not count(progress.get(key)) or progress.get(key) != value for key, value in required.items()):
+        result.errors.append("El avance general no coincide con el Packing List y el detalle de cajas.")
 
 
 def demo_pda_result(container_id: str, records_by_code: Mapping[str, object], events: list[dict]) -> bytes:
@@ -305,7 +488,7 @@ def demo_pda_result(container_id: str, records_by_code: Mapping[str, object], ev
         if item.get("physical_state") == "EN_DEFINITIVA":
             bucket["in_final"] += 1
     payload = {
-        "schema": PDA_RESULT_SCHEMA,
+        "schema": V2_PDA_RESULT_SCHEMA,
         "version": 2,
         "container_id": canonical_scan(container_id),
         "record_signature": record_signature(records_by_code),

@@ -7,11 +7,12 @@ android {
     compileSdk 36
 
     defaultConfig {
-        applicationId 'com.ilubox.descargapda'
+        // Piloto paralelo: no exige desinstalar V0.9 ni depende de su firma debug.
+        applicationId 'com.ilubox.descargapda.v010'
         minSdk 23
         targetSdk 36
-        versionCode 11
-        versionName '0.9-dynamic-wms-q9'
+        versionCode 12
+        versionName '0.10-operador-continuo-q9'
     }
 
     buildTypes {

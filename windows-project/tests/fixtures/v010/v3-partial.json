@@ -1,0 +1,21 @@
+{
+  "schema":"ilubox.pda.result.v3",
+  "version":3,
+  "container_id":"PARCIAL",
+  "record_signature":"12b2012b81338a71d97d8bd890278057b211d79983aea2cd88562f9309aaaedb",
+  "exported_at":"2026-08-28T01:32:34Z",
+  "engine_version":"0.10-operador-continuo",
+  "verification_model":"FINAL_PALLET",
+  "individual_sequence":{"prefix":"U","start":1,"consecutive":true,"padding":3},
+  "progress":{"received":1,"expected":10,"in_final":1,"wms_eligible":1},
+  "active_transfer":"TR-01",
+  "transfers":[
+    {"id":"TR-01","closed":false,"boxes":0,"verified_boxes":0,"status":"EN_FORMACION"}
+  ],
+  "pallets":[
+    {"id":"T-01","formation":"PIE","physical_position":"I01","status":"RETIRADA","expected":1,"original_expected":2,"scanned":1,"in_final":1,"validated":true,"retired":true,"closure_reason":"Falta de espacio al pie","verification_method":"REVISION_FISICA","verified_by":"OP","verified_at":"2026-08-28T01:32:34Z","verified_boxes":1}
+  ],
+  "accepted_events":[
+    {"raw_scan":"GRANDEU005","barcode":"GRANDEU005","code":"GRANDE","box_number":5,"final_pallet":"T-01","physical_position":"I01","transfer_pallet":"","direct_to_final":true,"transfer_closed":false,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-28 10:00:00"}
+  ]
+}

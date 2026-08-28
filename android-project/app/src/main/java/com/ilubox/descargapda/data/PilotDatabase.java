@@ -9,6 +9,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 import com.ilubox.descargapda.core.ScanResult;
 import com.ilubox.descargapda.core.UnloadEngine;
 import com.ilubox.descargapda.core.CodeRecord;
+import com.ilubox.descargapda.core.PdaResultWriter;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -85,7 +86,42 @@ public class PilotDatabase extends SQLiteOpenHelper {
         values.put("container_id", engine.containerId);
         values.put("engine_blob", bos.toByteArray());
         values.put("updated_at", now());
-        getWritableDatabase().insertWithOnConflict("session_state", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        long row = getWritableDatabase().insertWithOnConflict("session_state", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+        if (row < 0) throw new IllegalStateException("No se guardó la sesión");
+    }
+
+    /** El historial y el estado se confirman juntos: nunca mostrar OK si falla el guardado. */
+    public void saveScanAndEngine(ScanResult result, UnloadEngine engine) throws Exception {
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            insertScanEvent(result);
+            saveEngine(engine);
+            database.setTransactionSuccessful();
+        } finally { database.endTransaction(); }
+    }
+
+    public void saveActionAndEngine(String status, String position, String message, UnloadEngine engine) throws Exception {
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            insertSystemEvent(status, position, message);
+            saveEngine(engine);
+            database.setTransactionSuccessful();
+        } finally { database.endTransaction(); }
+    }
+
+    public void startNewSession(UnloadEngine engine, String message) throws Exception {
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            database.delete("events", null, null);
+            database.delete("session_state", null, null);
+            database.execSQL("DELETE FROM sqlite_sequence WHERE name='events'");
+            saveEngine(engine);
+            insertSystemEvent("INICIO", "", message);
+            database.setTransactionSuccessful();
+        } finally { database.endTransaction(); }
     }
 
     public UnloadEngine loadEngine() {
@@ -127,7 +163,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
         v.put("received", r.received);
         v.put("expected", r.expected);
         v.put("accepted", r.ok ? 1 : 0);
-        getWritableDatabase().insert("events", null, v);
+        getWritableDatabase().insertOrThrow("events", null, v);
     }
 
     public void insertSystemEvent(String status, String position, String message) {
@@ -143,7 +179,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
         v.put("received", 0);
         v.put("expected", 0);
         v.put("accepted", 1);
-        getWritableDatabase().insert("events", null, v);
+        getWritableDatabase().insertOrThrow("events", null, v);
     }
 
     private EventRow readEvent(Cursor c) {
@@ -189,7 +225,8 @@ public class PilotDatabase extends SQLiteOpenHelper {
         String sql = "SELECT COUNT(*) FROM events WHERE id>? AND scan='' AND status IN " +
                 "('POSICIÓN LISTA','TARIMA LLENA MANUAL','TARIMA REABIERTA','POSICIÓN HABILITADA','POSICIÓN DESHABILITADA'," +
                 "'DEFINITIVA FORMADA','BUFFER HABILITADO','BUFFER DESHABILITADO','TRASLADO ENVIADO'," +
-                "'TRASLADO DISTRIBUIDO','TARIMA DIRECTA CERRADA','TARIMA VALIDADA')";
+                "'TRASLADO DISTRIBUIDO','TARIMA DIRECTA CERRADA','TARIMA VALIDADA','TRASLADO CAMBIADO'," +
+                "'TARIMA PARCIAL CERRADA','TARIMA VERIFICADA','TARIMA RETIRADA')";
         try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{String.valueOf(eventId)})) {
             return c.moveToFirst() && c.getInt(0) > 0;
         }
@@ -265,9 +302,8 @@ public class PilotDatabase extends SQLiteOpenHelper {
     }
 
     /**
-     * Contrato V0.9. Conserva todas las cajas aceptadas vigentes, pero declara
-     * explícitamente si siguen en TR-xx, si ya llegaron a T-xx y si la tarima
-     * fue validada. Windows usa esos estados para impedir una exportación WMS prematura.
+     * Contrato v3. Conserva las cajas aceptadas vigentes y la prueba de contenido por tarima.
+     * Un cambio de TR nunca equivale a una confirmación física.
      */
     public void writePdaResultJson(OutputStream output, UnloadEngine engine) throws Exception {
         LinkedHashMap<String, EventRow> latestByBarcode = new LinkedHashMap<>();
@@ -280,72 +316,10 @@ public class PilotDatabase extends SQLiteOpenHelper {
         ArrayList<EventRow> accepted = new ArrayList<>(latestByBarcode.values());
         Collections.sort(accepted, Comparator.comparingLong(event -> event.id));
 
-        int[] progress = engine.progress();
-        StringBuilder body = new StringBuilder(Math.max(2048, accepted.size() * 260));
-        body.append("{\n")
-                .append("  \"schema\": \"ilubox.pda.result.v2\",\n")
-                .append("  \"version\": 2,\n")
-                .append("  \"container_id\": ").append(json(engine.containerId)).append(",\n")
-                .append("  \"record_signature\": ").append(json(recordSignature(engine))).append(",\n")
-                .append("  \"exported_at\": ").append(json(now())).append(",\n")
-                .append("  \"engine_version\": ").append(json(UnloadEngine.ENGINE_VERSION)).append(",\n")
-                .append("  \"individual_sequence\": {\"prefix\": \"U\", \"start\": 1, \"consecutive\": true, \"padding\": 3},\n")
-                .append("  \"progress\": {\"received\": ").append(progress[0])
-                .append(", \"expected\": ").append(progress[1])
-                .append(", \"in_final\": ").append(engine.inFinalBoxCount())
-                .append(", \"wms_eligible\": ").append(engine.wmsEligibleBoxCount()).append("},\n")
-                .append("  \"pallets\": [\n");
-
-        List<UnloadEngine.FinalPalletView> palletViews = engine.finalPalletViews();
-        for (int i = 0; i < palletViews.size(); i++) {
-            UnloadEngine.FinalPalletView pallet = palletViews.get(i);
-            body.append("    {\"id\": ").append(json(pallet.label))
-                    .append(", \"formation\": ").append(json(pallet.direct ? "PIE" : "TENDIDO"))
-                    .append(", \"physical_position\": ").append(json(pallet.physicalPosition))
-                    .append(", \"status\": ").append(json(pallet.status))
-                    .append(", \"expected\": ").append(pallet.expected)
-                    .append(", \"scanned\": ").append(pallet.scanned)
-                    .append(", \"in_final\": ").append(pallet.received)
-                    .append(", \"validated\": ").append(pallet.validated).append("}");
-            if (i + 1 < palletViews.size()) body.append(',');
-            body.append('\n');
-        }
-        body.append("  ],\n")
-                .append("  \"accepted_events\": [\n");
-
-        for (int i = 0; i < accepted.size(); i++) {
-            EventRow event = accepted.get(i);
-            String barcode = event.normalizedScan.trim().toUpperCase(Locale.ROOT);
-            UnloadEngine.ScanMeta meta = engine.scannedUniqueBarcodes.get(barcode);
-            String finalPallet = safe(engine.finalPalletForBarcode.get(barcode));
-            if (finalPallet.isEmpty() && meta != null) finalPallet = safe(meta.position);
-            String transferPallet = safe(engine.transferForBarcode.get(barcode));
-            boolean direct = engine.directFinalCodes.contains(safe(event.code).toUpperCase(Locale.ROOT));
-            boolean transferDistributed = transferPallet.isEmpty() || engine.distributedTransfers.contains(transferPallet);
-            String physicalState = engine.boxPhysicalState(barcode);
-            boolean palletValidated = engine.validatedFinalPallets.contains(finalPallet);
-            boolean eligible = engine.isBoxWmsEligible(barcode);
-            body.append("    {\n")
-                    .append("      \"raw_scan\": ").append(json(event.scan)).append(",\n")
-                    .append("      \"barcode\": ").append(json(barcode)).append(",\n")
-                    .append("      \"code\": ").append(json(event.code)).append(",\n")
-                    .append("      \"box_number\": ").append(event.boxNumber).append(",\n")
-                    .append("      \"final_pallet\": ").append(json(finalPallet)).append(",\n")
-                    .append("      \"physical_position\": ").append(json(engine.physicalPositionForPallet(finalPallet))).append(",\n")
-                    .append("      \"transfer_pallet\": ").append(json(transferPallet)).append(",\n")
-                    .append("      \"direct_to_final\": ").append(direct).append(",\n")
-                    .append("      \"transfer_distributed\": ").append(transferDistributed).append(",\n")
-                    .append("      \"physical_state\": ").append(json(physicalState)).append(",\n")
-                    .append("      \"final_pallet_validated\": ").append(palletValidated).append(",\n")
-                    .append("      \"wms_eligible\": ").append(eligible).append(",\n")
-                    .append("      \"scanned_at\": ").append(json(event.time)).append("\n")
-                    .append("    }");
-            if (i + 1 < accepted.size()) body.append(',');
-            body.append('\n');
-        }
-        body.append("  ]\n}\n");
-        output.write(body.toString().getBytes(StandardCharsets.UTF_8));
-        output.flush();
+        ArrayList<PdaResultWriter.AcceptedScan> scans = new ArrayList<>();
+        for (EventRow event : accepted) scans.add(new PdaResultWriter.AcceptedScan(event.scan,
+                event.normalizedScan.trim().toUpperCase(Locale.ROOT), event.code, event.boxNumber, event.time));
+        PdaResultWriter.write(output, engine, scans);
     }
 
     public void setTemporalForCurrentPallet(String position, String temporal) {
@@ -497,7 +471,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
         summary.add("Cajas válidas únicas escaneadas", engine.acceptedBoxCount());
         summary.add("Cajas confirmadas en definitiva", engine.inFinalBoxCount());
         summary.add("Cajas elegibles para WMS", engine.wmsEligibleBoxCount());
-        summary.add("Cajas faltantes", Math.max(0, expectedBoxes - engine.acceptedBoxCount()));
+        summary.add("Cajas pendientes de escanear", Math.max(0, expectedBoxes - engine.acceptedBoxCount()));
         summary.add("Códigos completos", completeCodes);
         summary.add("Códigos parciales", partialCodes);
         summary.add("Códigos no iniciados", notStartedCodes);
@@ -511,16 +485,20 @@ public class PilotDatabase extends SQLiteOpenHelper {
         sheets.add(summary);
 
         SimpleXlsxWriter.Sheet pallets = new SimpleXlsxWriter.Sheet("Tarimas");
-        pallets.add("Tarima final", "Formación", "Posición física", "Estado", "Escaneadas",
-                "En definitiva", "Esperadas", "Códigos distintos", "Validada", "Elegibles WMS");
+        pallets.add("Tarima final", "Formación", "Posición física", "Estado", "Registradas",
+                "Verificadas físicamente", "Previstas", "Códigos registrados", "Verificada", "Elegibles WMS",
+                "Códigos previstos", "Previsión original", "Motivo cierre parcial", "Retirada", "Verificado por", "Fecha verificación", "Método verificación");
         for (UnloadEngine.FinalPalletView pallet : engine.finalPalletViews()) {
             int eligible = 0;
             for (Map.Entry<String,String> entry : engine.finalPalletForBarcode.entrySet()) {
                 if (pallet.label.equals(entry.getValue()) && engine.isBoxWmsEligible(entry.getKey())) eligible++;
             }
+            UnloadEngine.PalletVerification proof = engine.verificationForPallet(pallet.label);
             pallets.add(pallet.label, pallet.direct ? "PIE" : "TENDIDO", pallet.physicalPosition,
                     pallet.status, pallet.scanned, pallet.received, pallet.expected, pallet.codeCount,
-                    pallet.validated ? 1 : 0, eligible);
+                    pallet.validated ? 1 : 0, eligible, pallet.plannedCodeCount, pallet.originalExpected,
+                    pallet.closureReason, pallet.retired ? 1 : 0, proof == null ? "" : proof.responsible,
+                    proof == null ? "" : proof.time, proof == null ? "" : proof.method);
         }
         sheets.add(pallets);
 
@@ -547,30 +525,21 @@ public class PilotDatabase extends SQLiteOpenHelper {
         sheets.add(detail);
 
         SimpleXlsxWriter.Sheet transfers = new SimpleXlsxWriter.Sheet("Traslados");
-        transfers.add("Traslado", "Estado", "Cajas", "Destinos");
-        LinkedHashMap<String, LinkedHashSet<String>> transferDestinations = new LinkedHashMap<>();
-        LinkedHashMap<String, Integer> transferBoxes = new LinkedHashMap<>();
-        for (Map.Entry<String,String> entry : engine.transferForBarcode.entrySet()) {
-            String transfer = entry.getValue();
-            if (!transferDestinations.containsKey(transfer)) transferDestinations.put(transfer, new LinkedHashSet<>());
-            transferDestinations.get(transfer).add(safe(engine.finalPalletForBarcode.get(entry.getKey())));
-            transferBoxes.put(transfer, transferBoxes.containsKey(transfer) ? transferBoxes.get(transfer) + 1 : 1);
-        }
-        for (String transfer : transferDestinations.keySet()) {
-            String state = engine.distributedTransfers.contains(transfer) ? "DISTRIBUIDA"
-                    : (engine.transfersInDistribution.contains(transfer) ? "EN DISTRIBUCIÓN" : "EN FORMACIÓN");
+        transfers.add("Traslado", "Estado", "Cajas registradas", "Destinos", "Cajas verificadas en definitiva");
+        for (String transfer : engine.transferLabels()) {
             StringBuilder destinations = new StringBuilder();
-            for (String target : transferDestinations.get(transfer)) {
+            for (Map.Entry<String, Integer> destination : engine.transferDestinations(transfer).entrySet()) {
                 if (destinations.length() > 0) destinations.append(" · ");
-                destinations.append(target);
+                destinations.append(destination.getKey()).append(" (").append(destination.getValue()).append(")");
             }
-            transfers.add(transfer, state, transferBoxes.get(transfer), destinations.toString());
+            transfers.add(transfer, engine.transferStatus(transfer), engine.transferBoxCount(transfer),
+                    destinations.toString(), engine.transferVerifiedBoxCount(transfer));
         }
         sheets.add(transfers);
 
         SimpleXlsxWriter.Sheet compare = new SimpleXlsxWriter.Sheet("Packing_vs_Escaneo");
-        compare.add("Código", "Esperadas PL", "Escaneadas únicas", "Faltantes", "Avance %", "Estado",
-                "U faltantes", "CBM PL", "CBM/caja", "Peso/caja", "Bodega");
+        compare.add("Código", "Esperadas PL", "Escaneadas únicas", "Pendientes", "Avance %", "Estado",
+                "U pendientes", "CBM PL", "CBM/caja", "Peso/caja", "Bodega");
         for (CodeRecord record : engine.records.values()) {
             int got = engine.received.containsKey(record.code) ? engine.received.get(record.code) : 0;
             int missing = Math.max(0, record.boxes - got);

@@ -28,7 +28,7 @@ APP_DIR = Path(__file__).resolve().parent
 OFFICIAL_TEMPLATE = APP_DIR / "assets" / "templates" / "Plantilla_oficial_WMS_PutawayCrossDockImport.xlsx"
 
 
-st.set_page_config(page_title="Ilubox WMS Windows V0.9", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Ilubox WMS Windows V0.10", page_icon="📦", layout="wide")
 
 st.markdown(
     """
@@ -248,6 +248,42 @@ def render_position_map(live, highlight=None):
         st.markdown(f'<div class="map-side-title">{side_name}</div><div class="map-wrap"><div class="position-grid">{"".join(body)}</div></div>', unsafe_allow_html=True)
 
 
+def render_pda_pallets(result, key_prefix):
+    """Consulta compartida; no incluye exportaciones ni modifica el resultado recibido."""
+    total = len(result.events)
+    st.metric("Cajas registradas en PDA", f"{total} · {len(result.eligible_events)} verificadas")
+    st.caption(f"Copia exportada: {result.exported_at or 'sin fecha'} · no se actualiza en vivo desde la Q9.")
+    show_all = st.checkbox("Incluir planificadas y retiradas", key=f"{key_prefix}_all")
+    visible = [p for p in result.pallets if show_all or (p.get("scanned", 0) > 0 and not p.get("retired", False))]
+    for formation, title in (("PIE", "Al pie del contenedor"), ("TENDIDO", "Tendido final")):
+        st.markdown(f"#### {title}")
+        rows = [{
+            "Tarima": p["id"], "Posición física": p.get("physical_position", ""),
+            "Registradas": p.get("scanned", 0), "Previstas": p.get("expected", 0),
+            "Estado": p.get("status", ""),
+        } for p in visible if p.get("formation") == formation]
+        if rows:
+            st.dataframe(rows, width="stretch", hide_index=True)
+        else:
+            st.caption("Sin tarimas activas en este bloque.")
+    if visible:
+        pallet_id = st.selectbox("Consultar tarima", [p["id"] for p in visible], key=f"{key_prefix}_pallet")
+        items = [event for event in result.events if event["Tarima"] == pallet_id]
+        grouped = {}
+        for event in items:
+            code = event["Código"]
+            grouped[code] = grouped.get(code, 0) + 1
+        if grouped:
+            st.dataframe([{"Código": code, "Cajas registradas": count} for code, count in grouped.items()], width="stretch", hide_index=True)
+        with st.expander("Ver cajas individuales Uxx"):
+            st.dataframe([{"Caja": event["Escaneo"], "Traslado": event["Tarima traslado"], "Estado físico": event["Estado físico"]}
+                          for event in items], width="stretch", hide_index=True)
+        proof = next(p for p in visible if p["id"] == pallet_id)
+        if proof.get("verified_by"):
+            st.caption(f"Verificado por {proof['verified_by']} · {proof.get('verified_at', '')}")
+    st.caption("Registrada no significa físicamente verificada. Verificada no significa ubicada o aceptada por el WMS.")
+
+
 def render_operator_ready_buttons(live, container):
     pending = live.pending_removal_positions()
     if not pending:
@@ -295,12 +331,19 @@ if mode == "👷 Operador":
         st.stop()
 
     container = st.session_state.containers[idx]
+    imported_pda = st.session_state.pda_results.get(container_key(container))
+    if imported_pda and imported_pda.ready:
+        operator_view = st.radio("Vista del operador", ["Tarimas de la PDA (consulta)", "Escaneo local (prueba)"], horizontal=True)
+        if operator_view == "Tarimas de la PDA (consulta)":
+            st.title(f"📦 {container.container_id} · Tarimas PDA")
+            render_pda_pallets(imported_pda, "operator_pda")
+            st.stop()
     live = get_live(container)
     received, expected = live.progress()
     pressure = live.position_pressure()
 
     st.title(f"📦 {container.container_id}")
-    st.caption("Escanea la caja y colócala en la posición indicada. I/D se leen mirando desde el andén hacia el interior del contenedor. La tarima incompleta no se mueve.")
+    st.caption("Escaneo local de prueba: independiente de la descarga de la PDA. No mezcle ambas capturas. El flujo continuo T-xx/TR-xx se opera en la Q9.")
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Escaneadas", f"{received} / {expected}")
@@ -354,7 +397,7 @@ if mode == "👷 Operador":
 # MODO SUPERVISOR
 # ==========================
 else:
-    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.9")
+    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.10")
     st.caption(
         "La aplicación organiza la descarga, conserva el avance localmente y prepara una copia validada "
         "de la plantilla oficial. No se conecta ni ejecuta movimientos dentro del WMS."
@@ -600,7 +643,8 @@ else:
         st.markdown("#### Resultado de la PDA")
         st.caption(
             "La PDA valida cada código individual y exporta un JSON al terminar. Al importarlo, "
-            "Windows verifica contenedor, Packing List, rangos y duplicados antes de usarlo."
+            "Windows verifica contenedor, Packing List, rangos, duplicados y la revisión física de cada tarima. "
+            "V0.10 ya no exige confirmar cada distribución de TR."
         )
         pda_upload = st.file_uploader(
             "Resultado PDA (.json)",
@@ -625,11 +669,14 @@ else:
             if parsed_result.ready:
                 st.session_state.pda_results[result_key] = parsed_result
                 st.success(f"Resultado PDA validado: {len(parsed_result.events)} cajas únicas.")
+            else:
+                st.session_state.pda_results.pop(result_key, None)
+                st.error("El resultado no se activó. Importe uno válido antes de generar el WMS; no se usará una copia anterior por error.")
 
         pda_result = st.session_state.pda_results.get(result_key)
         source_events = []
         source_received = 0
-        source_label = "Resultado PDA V0.9 pendiente"
+        source_label = "Resultado PDA V0.10 pendiente"
         if pda_result and pda_result.ready:
             src1, src2 = st.columns([3, 1])
             src1.success(
@@ -644,16 +691,18 @@ else:
             source_received = len(source_events)
             eligible = len(pda_result.eligible_events)
             if eligible == source_received:
-                st.success(f"Estado físico y validación: {eligible}/{source_received} cajas elegibles para WMS.")
+                st.success(f"Contenido físico verificado: {eligible}/{source_received} cajas elegibles para WMS.")
             else:
                 st.warning(
                     f"Aún no puede generarse el WMS: {eligible}/{source_received} cajas están en definitiva "
                     "y pertenecen a una tarima validada."
                 )
+            with st.expander("Consultar tarimas y desglose del resultado PDA"):
+                render_pda_pallets(pda_result, "supervisor_pda")
         else:
             st.warning(
-                "Importa un resultado PDA V0.9. El escaneo local de Windows permanece disponible para pruebas "
-                "y auditoría, pero no sustituye la confirmación física de traslado y tarima."
+                "Importa un resultado PDA V0.10 (también se admite V0.9). El escaneo local de Windows permanece disponible para pruebas "
+                "y auditoría, pero no sustituye la verificación física de cada tarima."
             )
 
         st.caption(f"Fuente activa: **{source_label}** · {source_received}/{expected} cajas")
@@ -753,8 +802,11 @@ else:
 
         for warning in build_result.warnings:
             st.warning(warning)
-        for error in build_result.errors:
+        for error in build_result.errors[:12]:
             st.error(error)
+        if len(build_result.errors) > 12:
+            with st.expander(f"Ver los {len(build_result.errors)} problemas que bloquean la exportación"):
+                st.write("\n\n".join(build_result.errors))
 
         if build_result.rows:
             st.markdown("#### Vista previa exacta")

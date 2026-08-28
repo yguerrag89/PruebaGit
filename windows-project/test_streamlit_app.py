@@ -1,8 +1,10 @@
 from streamlit.testing.v1 import AppTest
+from pathlib import Path
 
 from core.live import LiveUnload
 from core.optimizer import Settings
 from core.parser import CodeRecord, ParsedContainer
+from core.pda_exchange import parse_pda_result
 
 
 app = AppTest.from_file("app.py", default_timeout=15)
@@ -42,4 +44,21 @@ assert [tab.label for tab in app.tabs] == [
 ]
 assert any("Generar archivo exclusivo" in item.value for item in app.subheader)
 
-print("OK Streamlit V0.9: preparación física y exportación WMS exclusiva")
+continuous_records = [CodeRecord("CHICOA", 3, 0.60, 0.20), CodeRecord("CHICOB", 3, 0.60, 0.20)]
+continuous = ParsedContainer(container_id="CONTINUO", source_file="prueba.xlsx", sheet="Sheet1", records=continuous_records, warnings=[])
+continuous_key = "CONTINUO|prueba.xlsx|Sheet1"
+native = parse_pda_result(Path("tests/fixtures/v010/v3-verified.json").read_bytes(), {r.code: r for r in continuous_records}, "CONTINUO")
+assert native.ready
+app.session_state.containers = [continuous]
+app.session_state.active_container = 0
+app.session_state.pda_results = {continuous_key: native}
+app.radio[0].set_value("👷 Operador").run()
+assert not app.exception, app.exception
+assert any("Tarimas PDA" in title.value for title in app.title)
+assert not app.get("download_button"), "La consulta del operador no incluye exportaciones"
+assert any(field.label == "Consultar tarima" for field in app.selectbox)
+app.radio[0].set_value("🧑‍💼 Supervisor").run()
+assert not app.exception, app.exception
+assert app.get("download_button"), "Las exportaciones permanecen en Supervisor"
+
+print("OK Streamlit V0.10: consulta de tarimas para operador, exportaciones solo en Supervisor")
