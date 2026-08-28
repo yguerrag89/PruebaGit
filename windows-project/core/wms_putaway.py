@@ -8,6 +8,7 @@ import unicodedata
 
 from openpyxl import load_workbook
 from .strict_scan import parse_strict_scan
+from .wms_location import valid_wms_temporary
 
 
 WMS_HEADERS = (
@@ -136,7 +137,9 @@ def build_putaway_rows(
     """Construye filas estrictas de caja individual para la plantilla oficial.
 
     La ubicación se resuelve por tarima, después por posición física y finalmente
-    con la ubicación predeterminada. Nunca se interpreta I01/D01 como ubicación WMS.
+    con la ubicación predeterminada para resultados anteriores a v4. En v4 se usa
+    exclusivamente la temporal capturada al cerrar en PDA, sin sustituciones.
+    Nunca se interpreta I01/D01 como ubicación WMS.
     """
     result = WmsBuildResult()
     order = _validate_text(putaway_order, "Orden Putaway", result.errors)
@@ -169,6 +172,7 @@ def build_putaway_rows(
         return result
 
     seen: set[str] = set()
+    captured_locations: dict[str, str] = {}
     for sequence, event in enumerate(accepted, start=1):
         barcode = _canonical_identifier(event.get("Escaneo", ""))
         base_code = _canonical_identifier(event.get("Código", ""))
@@ -215,11 +219,26 @@ def build_putaway_rows(
             result.errors.append(f"Caja {sequence}: código individual inválido o fuera del Packing List: {barcode}.")
             continue
 
-        location = _normalized_text(location_by_pallet.get(pallet_id, ""))
-        if not location:
-            location = _normalized_text(location_by_position.get(physical_position, ""))
-        if not location:
-            location = default_location
+        if event.get("Temporal WMS obligatoria") is True or event.get("Modelo verificación") == "FINAL_PALLET_WMS_TEMPORARY":
+            location = event.get("Temporal WMS")
+            if not valid_wms_temporary(location):
+                result.errors.append(f"Tarima {pallet_id}: falta una temporal WMS válida registrada al cierre en la PDA.")
+                continue
+            previous = captured_locations.setdefault(pallet_id, location)
+            if previous != location:
+                result.errors.append(f"Tarima {pallet_id}: sus cajas declaran temporales WMS diferentes.")
+                continue
+            proposed = (_normalized_text(location_by_pallet.get(pallet_id, "")),
+                        _normalized_text(location_by_position.get(physical_position, "")), default_location)
+            if any(value and value != location for value in proposed):
+                result.errors.append(f"Tarima {pallet_id}: no se permite sustituir la temporal {location} registrada en la PDA desde Windows.")
+                continue
+        else:
+            location = _normalized_text(location_by_pallet.get(pallet_id, ""))
+            if not location:
+                location = _normalized_text(location_by_position.get(physical_position, ""))
+            if not location:
+                location = default_location
         if not location:
             result.errors.append(
                 f"Tarima {pallet_id or 'sin identificar'}: falta la ubicación WMS."

@@ -7,7 +7,7 @@ public class EngineSelfTest {
     }
 
     public static void main(String[] args) {
-        ok("0.10-operador-continuo".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
+        ok("0.11-temporal-obligatoria".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
         Settings s = new Settings();
         List<CodeRecord> records = Arrays.asList(
             new CodeRecord("BIG", 5, 2.5, 0.5, null, "", ""),
@@ -202,7 +202,7 @@ public class EngineSelfTest {
         ok("PENDIENTE_VERIFICAR".equals(t.boxPhysicalState("GRANDEU004")), "directa tampoco prueba presencia por escaneo");
         ActionResult closedDirect = t.closeDirectPalletEarly(tg.position, "Falta de espacio");
         ok(closedDirect.ok, "cierre físico anticipado de directa");
-        ActionResult validatedDirect = t.validateFinalPallet(tg.position, "OP-01");
+        ActionResult validatedDirect = t.validateFinalPallet(tg.position, "OP-01", "2B-TMP-01");
         ok(validatedDirect.ok && t.validatedFinalPallets.contains(tg.position), "directa validada");
         ok(t.isBoxWmsEligible("GRANDEU004"), "directa validada elegible WMS");
         ok(!t.scanTransfer("GRANDE2U001").ok, "verificar no libera la posición");
@@ -229,9 +229,9 @@ public class EngineSelfTest {
         // Completar la captura, cambiar la TR activa y revisar físicamente habilita WMS.
         ScanResult tc3 = t.scanTransfer("CHICOU003");
         ok(tc3.ok, "tercera caja chica");
-        ok(!t.validateFinalPallet(tc.position, "OP-01").ok, "no verifica cajas que siguen en la TR activa");
+        ok(!t.validateFinalPallet(tc.position, "OP-01", "2B-TMP-02").ok, "no verifica cajas que siguen en la TR activa");
         ok(t.changeCurrentTransfer().ok, "cambia TR-02 por TR-03");
-        ActionResult validateTendido = t.validateFinalPallet(tc.position, "OP-01");
+        ActionResult validateTendido = t.validateFinalPallet(tc.position, "OP-01", "2B-TMP-02");
         ok(validateTendido.ok && t.isBoxWmsEligible("CHICOU001")
                 && t.isBoxWmsEligible("CHICOU002") && t.isBoxWmsEligible("CHICOU003"),
                 "tendido validado habilita sus cajas para WMS");
@@ -243,6 +243,6 @@ public class EngineSelfTest {
         }
         ok(sawDirect && sawTendido, "tablero separa al pie y tendido final");
 
-        System.out.println("OK Android core V0.10: AUTO/MANUAL/BUFFER + TRASLADO continuo + WMS estricto");
+        System.out.println("OK Android core V0.11: AUTO/MANUAL/BUFFER + TRASLADO continuo + temporal WMS obligatoria");
     }
 }

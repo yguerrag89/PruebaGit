@@ -3,7 +3,7 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 
-/** Regresiones del flujo continuo, recuperación real de V0.9 y contrato nativo v3. */
+/** Regresiones del flujo continuo, estado V0.9 sin temporales ficticias y contrato nativo v4. */
 public class ContinuousEngineSelfTest {
     private static int checks;
     private static void check(boolean value, String message) {
@@ -32,7 +32,7 @@ public class ContinuousEngineSelfTest {
     }
 
     public static void main(String[] args) throws Exception {
-        Path output = Paths.get(args.length > 1 ? args[1] : "test-output/v010");
+        Path output = Paths.get(args.length > 1 ? args[1] : "test-output/v011");
         Settings settings = new Settings();
         settings.targetCapacity = 0.60;
         settings.largeRatio = 2.0;
@@ -52,25 +52,25 @@ public class ContinuousEngineSelfTest {
         check(engine.scanTransfer("CHICOAU003").ok && engine.scanTransfer("CHICOAU002").ok, "U desordenados y escaneo continuo");
         check(engine.transferBoxCount("TR-01") == 2 && engine.currentTransferBoxCount() == 2, "no mezcla viajes");
         check(engine.isPalletReadyForVerification(a1.position), "captura completa avisa revisar");
-        check(!engine.validateFinalPallet(a1.position, "OP-1").ok, "TR activa impide verificar solo esa T");
+        check(!engine.validateFinalPallet(a1.position, "OP-1", "2B-TMP-01").ok, "TR activa impide verificar solo esa T");
         check(engine.changeCurrentTransfer().ok, "cierra segundo viaje");
         check(engine.wmsEligibleBoxCount() == 0 && engine.inFinalBoxCount() == 0, "cerrar viajes no inventa presencia física");
-        export(output, "v3-pending.json", engine);
-        check(!engine.validateFinalPallet(a1.position, "").ok, "responsable obligatorio");
-        check(!engine.validateFinalPallet(a1.position, "OP\n1").ok, "responsable sin saltos de línea");
-        check(engine.validateFinalPallet(a1.position, "OP-1 \"Ana\"").ok, "verifica una T de dos viajes");
+        export(output, "v4-pending.json", engine);
+        check(!engine.validateFinalPallet(a1.position, "", "2B-TMP-01").ok, "responsable obligatorio");
+        check(!engine.validateFinalPallet(a1.position, "OP\n1", "2B-TMP-01").ok, "responsable sin saltos de línea");
+        check(engine.validateFinalPallet(a1.position, "OP-1 \"Ana\"", "2B-TMP-01").ok, "verifica una T de dos viajes");
         check(engine.wmsEligibleBoxCount() == 3 && !engine.isBoxWmsEligible("CHICOBU001"), "no verifica otra T del mismo viaje");
         check("PENDIENTE_VERIFICACION".equals(engine.transferStatus("TR-01")), "TR mixta sigue parcialmente pendiente");
         check("VERIFICADO_POR_TARIMAS".equals(engine.transferStatus("TR-02")), "TR verificada por todas sus T");
-        check(!engine.validateFinalPallet(a1.position, "OP-1").ok, "verificación idempotente");
+        check(!engine.validateFinalPallet(a1.position, "OP-1", "2B-TMP-01").ok, "verificación idempotente");
         check(!engine.undoAcceptedBox("CHICOAU002").ok, "contenido verificado inmutable");
-        export(output, "v3-mixed.json", engine);
+        export(output, "v4-mixed.json", engine);
         check(engine.scanTransfer("CHICOBU002").ok && engine.scanTransfer("CHICOBU003").ok, "sigue capturando B");
-        check(engine.changeCurrentTransfer().ok && engine.validateFinalPallet(b1.position, "OP-2").ok, "verifica B sin confirmar distribución");
+        check(engine.changeCurrentTransfer().ok && engine.validateFinalPallet(b1.position, "OP-2", "2B-TMP-02").ok, "verifica B sin confirmar distribución");
         check(engine.wmsEligibleBoxCount() == 6, "seis cajas elegibles");
         check(engine.releaseFinalPallet(a1.position).ok && engine.isPalletRetired(a1.position), "retiro del tendido conserva verificación");
         check(!engine.releaseFinalPallet(a1.position).ok, "retiro idempotente");
-        export(output, "v3-verified.json", engine);
+        export(output, "v4-verified.json", engine);
         UnloadEngine restored = copy(engine);
         check(restored.wmsEligibleBoxCount() == 6 && restored.isPalletRetired(a1.position), "persisten verificaciones/retiros");
         check(restored.transferPalletSeq == 4 && restored.transferBoxCount("TR-01") == 2, "persisten viajes");
@@ -87,13 +87,13 @@ public class ContinuousEngineSelfTest {
         check(!foot.isBarcodeInFinal("GRANDEU005"), "directa pendiente de verificación");
         check(!foot.scanTransfer("OTROU001").ok && foot.acceptedBoxCount() == 1, "sin espacio no cuenta caja");
         check(!foot.closeDirectPalletEarly(first.position, "").ok, "motivo parcial obligatorio");
-        check(!foot.validateFinalPallet(first.position, "OP").ok, "no verifica parcial sin cierre explícito");
+        check(!foot.validateFinalPallet(first.position, "OP", "2B-TMP-03").ok, "no verifica parcial sin cierre explícito");
         check(foot.closeDirectPalletEarly(first.position, "Falta de espacio al pie").ok, "cierre parcial");
         check(foot.expectedForPallet(first.position) == 1 && foot.originalExpectedForPallet(first.position) == 2, "conserva previsión original");
         check(foot.progress()[1] == 10 && foot.received.get("GRANDE") == 1, "no borra pendientes del contenedor");
         check(!foot.undoAcceptedBox("GRANDEU005").ok, "no deshace cierre parcial a espaldas del historial");
         check(!foot.releaseFinalPallet(first.position).ok, "no libera tarima sin verificar");
-        check(foot.validateFinalPallet(first.position, "OP").ok, "verifica parcial");
+        check(foot.validateFinalPallet(first.position, "OP", "2B-TMP-03").ok, "verifica parcial");
         check(foot.activeFinalPalletForFootPosition.size() == 1 && !foot.isPalletRetired(first.position), "verificar no libera espacio");
         check(!foot.scanTransfer("OTROU001").ok, "posición continúa ocupada");
         check(foot.releaseFinalPallet(first.position).ok && foot.activeFinalPalletForFootPosition.isEmpty(), "libera al confirmar retiro");
@@ -105,7 +105,7 @@ public class ContinuousEngineSelfTest {
         check(!foot.scanTransfer("GRANDEU000").ok && !foot.scanTransfer("GRANDEU006").ok
                 && !foot.scanTransfer("GRANDE").ok && foot.acceptedBoxCount() == 2, "identidad estricta sin efectos laterales");
         check(foot.undoAcceptedBox("GRANDEU001").ok && foot.activeFinalPalletForFootPosition.isEmpty(), "anular única caja no reserva un espacio fantasma");
-        export(output, "v3-partial.json", foot);
+        export(output, "v4-partial.json", foot);
         check(copy(foot).originalExpectedForPallet(first.position) == 2, "persiste cierre parcial");
 
         UnloadEngine composition = new UnloadEngine("DESGLOSE", Arrays.asList(
@@ -128,13 +128,17 @@ public class ContinuousEngineSelfTest {
         check(migrated.acceptedBoxCount() == 3 && migrated.progress()[1] == 12, "migra V0.9 sin perder cajas");
         check("TR-02".equals(migrated.currentTransferPallet()) && migrated.isTransferClosed("TR-01"), "TR antigua enviada no recibe cajas nuevas");
         String legacyPallet = migrated.finalPalletForBarcode.get("GRANDEU009");
-        check(migrated.isBoxWmsEligible("GRANDEU009") && migrated.isPalletRetired(legacyPallet), "conserva verificación/retiro antiguos");
+        check(!migrated.isBoxWmsEligible("GRANDEU009") && migrated.isPalletRetired(legacyPallet)
+                && migrated.isBarcodeInFinal("GRANDEU009"), "conserva historia física, no inventa temporal ni elegibilidad V0.11");
         check("LEGADO_V09".equals(migrated.verificationForPallet(legacyPallet).method)
                 && migrated.verificationForPallet(legacyPallet).time.isEmpty(), "no inventa fecha de comprobación antigua");
         check(migrated.activeFinalPalletForFootPosition.size() == 1 && !migrated.isBoxWmsEligible("GRANDEU003"), "respeta directa antigua sin verificar");
-        export(output, "v3-migrated.json", migrated);
+        boolean refusedLegacy = false;
+        try { PdaResultWriter.write(new ByteArrayOutputStream(), migrated, Collections.emptyList()); }
+        catch (IllegalStateException correct) { refusedLegacy = correct.getMessage().contains("sin temporal WMS"); }
+        check(refusedLegacy, "no exporta como V0.11 una verificación anterior sin temporal");
         check(migrated.scanTransfer("CHICOU002").ok && migrated.transferBoxCount("TR-01") == 1, "continúa tras migrar sin mezclar viajes");
         check(copy(migrated).currentTransferPallet().equals("TR-02"), "no avanza dos veces al recuperar V0.10");
-        System.out.println("OK V0.10 flujo continuo: " + checks + " comprobaciones; fixtures nativos: " + output);
+        System.out.println("OK V0.11 flujo continuo: " + checks + " comprobaciones; fixtures nativos: " + output);
     }
 }

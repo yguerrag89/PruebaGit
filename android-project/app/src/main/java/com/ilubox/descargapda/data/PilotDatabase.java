@@ -301,7 +301,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
     }
 
     /**
-     * Contrato v3. Conserva las cajas aceptadas vigentes y la prueba de contenido por tarima.
+     * Contrato v4. Conserva cajas aceptadas, prueba de contenido y temporal WMS por tarima.
      * Un cambio de TR nunca equivale a una confirmación física.
      */
     public void writePdaResultJson(OutputStream output, UnloadEngine engine) throws Exception {
@@ -486,7 +486,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
         SimpleXlsxWriter.Sheet pallets = new SimpleXlsxWriter.Sheet("Tarimas");
         pallets.add("Tarima final", "Formación", "Posición física", "Estado", "Registradas",
                 "Verificadas físicamente", "Previstas", "Códigos registrados", "Verificada", "Elegibles WMS",
-                "Códigos previstos", "Previsión original", "Motivo cierre parcial", "Retirada", "Verificado por", "Fecha verificación", "Método verificación");
+                "Códigos previstos", "Previsión original", "Motivo cierre parcial", "Retirada", "Verificado por", "Fecha verificación", "Método verificación", "Temporal WMS");
         for (UnloadEngine.FinalPalletView pallet : engine.finalPalletViews()) {
             int eligible = 0;
             for (Map.Entry<String,String> entry : engine.finalPalletForBarcode.entrySet()) {
@@ -497,7 +497,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
                     pallet.status, pallet.scanned, pallet.received, pallet.expected, pallet.codeCount,
                     pallet.validated ? 1 : 0, eligible, pallet.plannedCodeCount, pallet.originalExpected,
                     pallet.closureReason, pallet.retired ? 1 : 0, proof == null ? "" : proof.responsible,
-                    proof == null ? "" : proof.time, proof == null ? "" : proof.method);
+                    proof == null ? "" : proof.time, proof == null ? "" : proof.method, engine.wmsTemporaryForPallet(pallet.label));
         }
         sheets.add(pallets);
 
@@ -510,7 +510,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
         }
         SimpleXlsxWriter.Sheet detail = new SimpleXlsxWriter.Sheet("Detalle_tarimas");
         detail.add("FechaHora", "Barcode normalizado", "Código", "Número caja", "Tarima final",
-                "Formación", "Posición física", "Tarima traslado", "Estado físico", "Tarima validada", "Elegible WMS");
+                "Formación", "Posición física", "Tarima traslado", "Estado físico", "Tarima validada", "Elegible WMS", "Temporal WMS");
         for (Map.Entry<String, EventRow> entry : acceptedByBarcode.entrySet()) {
             String barcode = entry.getKey();
             EventRow event = entry.getValue();
@@ -519,7 +519,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
             detail.add(event.time, barcode, event.code, event.boxNumber, pallet, direct ? "PIE" : "TENDIDO",
                     engine.physicalPositionForPallet(pallet), safe(engine.transferForBarcode.get(barcode)),
                     engine.boxPhysicalState(barcode), engine.validatedFinalPallets.contains(pallet) ? 1 : 0,
-                    engine.isBoxWmsEligible(barcode) ? 1 : 0);
+                    engine.isBoxWmsEligible(barcode) ? 1 : 0, engine.wmsTemporaryForPallet(pallet));
         }
         sheets.add(detail);
 

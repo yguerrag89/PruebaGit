@@ -7,10 +7,12 @@ import json
 import re
 
 from .strict_scan import canonical_scan, parse_strict_scan, record_signature
+from .wms_location import valid_wms_temporary
 
 
 PDA_MANIFEST_SCHEMA = "ilubox.pda.manifest.v2"
-PDA_RESULT_SCHEMA = "ilubox.pda.result.v3"
+PDA_RESULT_SCHEMA = "ilubox.pda.result.v4"
+V3_PDA_RESULT_SCHEMA = "ilubox.pda.result.v3"
 V2_PDA_RESULT_SCHEMA = "ilubox.pda.result.v2"
 LEGACY_PDA_RESULT_SCHEMA = "ilubox.pda.result.v1"
 
@@ -90,13 +92,15 @@ def parse_pda_result(
         result.errors.append("El resultado PDA debe contener un objeto JSON.")
         return result
     supplied_schema = payload.get("schema")
-    is_v3 = supplied_schema == PDA_RESULT_SCHEMA and type(payload.get("version")) is int and payload.get("version") == 3
+    is_v4 = supplied_schema == PDA_RESULT_SCHEMA and type(payload.get("version")) is int and payload.get("version") == 4
+    is_v3 = supplied_schema == V3_PDA_RESULT_SCHEMA and type(payload.get("version")) is int and payload.get("version") == 3
     is_v2 = supplied_schema == V2_PDA_RESULT_SCHEMA and payload.get("version") == 2
     is_legacy = supplied_schema == LEGACY_PDA_RESULT_SCHEMA and payload.get("version", 1) == 1
-    has_physical_state = is_v2 or is_v3
+    is_continuous = is_v3 or is_v4
+    has_physical_state = is_v2 or is_continuous
     if not has_physical_state and not is_legacy:
         result.errors.append("El archivo no es un resultado PDA compatible con esta versión.")
-    result.schema_version = 3 if is_v3 else (2 if is_v2 else (1 if is_legacy else 0))
+    result.schema_version = 4 if is_v4 else (3 if is_v3 else (2 if is_v2 else (1 if is_legacy else 0)))
 
     if has_physical_state:
         sequence = payload.get("individual_sequence")
@@ -105,6 +109,7 @@ def parse_pda_result(
             and sequence.get("start") == 1
             and sequence.get("consecutive") is True
             and sequence.get("padding") == 3
+            and (not is_v4 or (type(sequence.get("start")) is int and type(sequence.get("padding")) is int))
         ):
             result.errors.append("El resultado PDA no confirma la secuencia U001…UN consecutiva.")
 
@@ -153,7 +158,7 @@ def parse_pda_result(
         if not isinstance(item, dict):
             result.errors.append(f"Registro PDA {index}: formato inválido.")
             continue
-        if is_v3 and any(type(item.get(key)) is not bool for key in (
+        if is_continuous and any(type(item.get(key)) is not bool for key in (
             "direct_to_final", "transfer_closed", "final_pallet_validated", "wms_eligible"
         )):
             result.errors.append(f"Registro PDA {index}: los controles de estado deben ser booleanos explícitos.")
@@ -163,7 +168,7 @@ def parse_pda_result(
         if not parsed.valid:
             result.errors.append(f"Registro PDA {index}: {parsed.message}")
             continue
-        if is_v3:
+        if is_continuous:
             if raw_barcode != parsed.normalized_barcode or type(item.get("box_number")) is not int:
                 result.errors.append(f"Registro PDA {index}: barcode normalizado o número de caja inválido.")
                 continue
@@ -177,7 +182,7 @@ def parse_pda_result(
         seen.add(parsed.normalized_barcode)
 
         supplied_code = canonical_scan(item.get("code", ""))
-        if (supplied_code or is_v3) and supplied_code != parsed.code:
+        if (supplied_code or is_continuous) and supplied_code != parsed.code:
             result.errors.append(
                 f"Registro PDA {index}: el código declarado no coincide con {parsed.normalized_barcode}."
             )
@@ -216,7 +221,7 @@ def parse_pda_result(
         transfer_closed = False
         if has_physical_state:
             physical_state = canonical_scan(item.get("physical_state", ""))
-            valid_states = {"PENDIENTE_VERIFICAR", "EN_DEFINITIVA"} if is_v3 else {"EN_TRASLADO", "EN_DEFINITIVA"}
+            valid_states = {"PENDIENTE_VERIFICAR", "EN_DEFINITIVA"} if is_continuous else {"EN_TRASLADO", "EN_DEFINITIVA"}
             if physical_state not in valid_states:
                 result.errors.append(f"Registro PDA {index}: estado físico inválido.")
                 continue
@@ -252,7 +257,15 @@ def parse_pda_result(
             if summary_position != physical_position:
                 result.errors.append(f"Registro PDA {index}: posición física de {pallet} inconsistente.")
                 continue
-            if is_v3:
+            if is_v4:
+                temporary = item.get("wms_temporary_location")
+                if not isinstance(temporary, str) or temporary != pallet_summary.get("wms_temporary_location"):
+                    result.errors.append(f"Registro PDA {index}: temporal WMS ausente o distinta de la tarima.")
+                    continue
+                if (pallet_validated and not valid_wms_temporary(temporary)) or (not pallet_validated and temporary):
+                    result.errors.append(f"Registro PDA {index}: temporal WMS incompatible con el cierre de la tarima.")
+                    continue
+            if is_continuous:
                 transfer_closed = item.get("transfer_closed") is True
                 if (physical_state == "EN_DEFINITIVA") != pallet_validated:
                     result.errors.append(f"Registro PDA {index}: solo una tarima verificada confirma presencia física.")
@@ -287,15 +300,19 @@ def parse_pda_result(
             "Verificado por": str(pallet_summary.get("verified_by", "")),
             "Fecha verificación": str(pallet_summary.get("verified_at", "")),
             "Método verificación": str(pallet_summary.get("verification_method", "")),
-            "Modelo verificación": "FINAL_PALLET" if is_v3 else "LEGACY_V2" if is_v2 else "SIN_CONFIRMACION",
+            "Modelo verificación": "FINAL_PALLET_WMS_TEMPORARY" if is_v4 else "FINAL_PALLET" if is_v3 else "LEGACY_V2" if is_v2 else "SIN_CONFIRMACION",
+            "Temporal WMS": item.get("wms_temporary_location", "") if is_v4 else "",
+            "Temporal WMS obligatoria": is_v4,
             "Elegible WMS": eligible,
             "Caja individual": True,
         })
 
     expected_total = sum(int(getattr(record, "boxes", 0)) for record in canonical_records.values())
     result.pallets = list(pallet_states.values())
-    if is_v3:
-        _validate_v3_summary(payload, pallet_states, result, expected_total)
+    if is_continuous:
+        _validate_v3_summary(payload, pallet_states, result, expected_total, requires_temporary=is_v4)
+    if is_v3 or is_v2:
+        result.warnings.append("Resultado anterior a V0.11: no acredita temporal al cierre en la PDA; requiere asignación manual de ubicaciones en Windows.")
     if result.events and len(result.events) < expected_total:
         result.warnings.append(
             f"Resultado parcial: {len(result.events)} de {expected_total} cajas esperadas."
@@ -317,10 +334,14 @@ def parse_pda_result(
     return result
 
 
-def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImportResult, expected_total: int) -> None:
+def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImportResult, expected_total: int,
+                         *, requires_temporary: bool = False) -> None:
     """Conciliar el detalle individual con tarimas, viajes y avance; fallar sin omitir diferencias."""
-    if payload.get("verification_model") != "FINAL_PALLET":
-        result.errors.append("El resultado v3 no declara verificación física por tarima final.")
+    expected_model = "FINAL_PALLET_WMS_TEMPORARY" if requires_temporary else "FINAL_PALLET"
+    if payload.get("verification_model") != expected_model:
+        result.errors.append("El resultado no declara el modelo de verificación requerido.")
+    if requires_temporary and payload.get("wms_location_validation") != "FORMAT_ONLY":
+        result.errors.append("La PDA debe indicar que solo comprobó el formato, no la existencia de la temporal en WMS.")
 
     def count(value: object) -> bool:
         return type(value) is int and value >= 0
@@ -347,6 +368,12 @@ def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImp
         original = pallet["original_expected"]
         verified = pallet["validated"]
         retired = pallet["retired"]
+        if requires_temporary:
+            temporary = pallet.get("wms_temporary_location")
+            if not isinstance(temporary, str) or (verified and not valid_wms_temporary(temporary)) or (not verified and temporary):
+                result.errors.append(prefix + "la temporal WMS es obligatoria al cerrar y debe estar vacía antes del cierre.")
+            if verified and pallet.get("verification_method") != "REVISION_FISICA":
+                result.errors.append(prefix + "V0.11 requiere revisión física con temporal; no acepta verificaciones heredadas sin ella.")
         items = grouped.get(pallet_id, [])
         actual_final = sum(event["Estado físico"] == "EN_DEFINITIVA" for event in items)
         if expected <= 0 or scanned > expected or original < expected:
@@ -417,7 +444,7 @@ def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImp
         result.errors.append("El traslado activo tiene un identificador inválido.")
     transfer_items = payload.get("transfers")
     if not isinstance(transfer_items, list):
-        result.errors.append("Falta el resumen de traslados v3.")
+        result.errors.append("Falta el resumen de traslados del flujo continuo.")
         transfer_items = []
     transfers: dict[str, dict] = {}
     for item in transfer_items:

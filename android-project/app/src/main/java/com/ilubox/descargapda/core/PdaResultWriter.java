@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 
-/** Contrato v3, comprobable sin Android: la prueba física pertenece a la T, no al viaje TR. */
+/** Contrato v4: prueba física y temporal WMS pertenecen a la T, no al viaje ni al espacio reutilizable. */
 public final class PdaResultWriter {
     private PdaResultWriter() {}
 
@@ -38,7 +38,12 @@ public final class PdaResultWriter {
     }
 
     public static void write(OutputStream output, UnloadEngine engine, List<AcceptedScan> scans) throws Exception {
-        if (!engine.isTransferMode()) throw new IllegalStateException("El resultado WMS v3 requiere modo TRASLADO. Use CSV/Excel para los modos de comparación.");
+        if (!engine.isTransferMode()) throw new IllegalStateException("El resultado WMS v4 requiere modo TRASLADO. Use CSV/Excel para los modos de comparación.");
+        for (String pallet : engine.validatedFinalPallets) {
+            if (!WmsTemporaryLocation.isCanonical(engine.wmsTemporaryForPallet(pallet)))
+                throw new IllegalStateException("La sesión contiene una verificación anterior sin temporal WMS (" + pallet
+                        + "). No se inventará una ubicación. Conserve los reportes y use la versión original para esa sesión.");
+        }
         HashSet<String> seen = new HashSet<>();
         for (AcceptedScan scan : scans) {
             UnloadEngine.ScanMeta meta = engine.scannedUniqueBarcodes.get(scan.barcode);
@@ -52,12 +57,13 @@ public final class PdaResultWriter {
         stamp.setTimeZone(TimeZone.getTimeZone("UTC"));
         int[] progress = engine.progress();
         StringBuilder body = new StringBuilder(Math.max(4096, scans.size() * 550));
-        body.append("{\n  \"schema\":\"ilubox.pda.result.v3\",\n  \"version\":3,")
+        body.append("{\n  \"schema\":\"ilubox.pda.result.v4\",\n  \"version\":4,")
                 .append("\n  \"container_id\":").append(json(engine.containerId))
                 .append(",\n  \"record_signature\":").append(json(recordSignature(engine)))
                 .append(",\n  \"exported_at\":").append(json(stamp.format(new Date())))
                 .append(",\n  \"engine_version\":").append(json(UnloadEngine.ENGINE_VERSION))
-                .append(",\n  \"verification_model\":\"FINAL_PALLET\"")
+                .append(",\n  \"verification_model\":\"FINAL_PALLET_WMS_TEMPORARY\"")
+                .append(",\n  \"wms_location_validation\":\"FORMAT_ONLY\"")
                 .append(",\n  \"individual_sequence\":{\"prefix\":\"U\",\"start\":1,\"consecutive\":true,\"padding\":3}")
                 .append(",\n  \"progress\":{\"received\":").append(progress[0])
                 .append(",\"expected\":").append(progress[1])
@@ -84,6 +90,7 @@ public final class PdaResultWriter {
             body.append("    {\"id\":").append(json(pallet.label))
                     .append(",\"formation\":").append(json(pallet.direct ? "PIE" : "TENDIDO"))
                     .append(",\"physical_position\":").append(json(pallet.physicalPosition))
+                    .append(",\"wms_temporary_location\":").append(json(engine.wmsTemporaryForPallet(pallet.label)))
                     .append(",\"status\":").append(json(pallet.status))
                     .append(",\"expected\":").append(pallet.expected)
                     .append(",\"original_expected\":").append(pallet.originalExpected)
@@ -111,6 +118,7 @@ public final class PdaResultWriter {
                     .append(",\"box_number\":").append(scan.boxNumber)
                     .append(",\"final_pallet\":").append(json(pallet))
                     .append(",\"physical_position\":").append(json(engine.physicalPositionForPallet(pallet)))
+                    .append(",\"wms_temporary_location\":").append(json(engine.wmsTemporaryForPallet(pallet)))
                     .append(",\"transfer_pallet\":").append(json(transfer))
                     .append(",\"direct_to_final\":").append(direct)
                     .append(",\"transfer_closed\":").append(!direct && engine.isTransferClosed(transfer))

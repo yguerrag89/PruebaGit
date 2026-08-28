@@ -1,4 +1,4 @@
 Ilubox WMS Windows
-Versión: 0.10
+Versión: 0.11
 Manifiesto PDA: ilubox.pda.manifest.v2
-Resultado PDA: ilubox.pda.result.v3 (compatible con v2; v1 solo auditoría)
+Resultado PDA: ilubox.pda.result.v4 (compatible con v3/v2; v1 solo auditoría)

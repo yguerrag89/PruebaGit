@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 public class UnloadEngine implements Serializable {
     private static final long serialVersionUID = 3L;
     public static final int MAX_PER_SIDE = 10;
-    public static final String ENGINE_VERSION = "0.10-operador-continuo";
+    public static final String ENGINE_VERSION = "0.11-temporal-obligatoria";
 
     public static class FinalPalletView implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -55,12 +55,18 @@ public class UnloadEngine implements Serializable {
         public final String time;
         public final String method;
         public final int boxes;
+        public final String wmsTemporaryLocation;
 
         public PalletVerification(String responsible, String time, String method, int boxes) {
+            this(responsible, time, method, boxes, "");
+        }
+
+        public PalletVerification(String responsible, String time, String method, int boxes, String temporary) {
             this.responsible = responsible;
             this.time = time;
             this.method = method;
             this.boxes = boxes;
+            this.wmsTemporaryLocation = temporary;
         }
     }
 
@@ -475,7 +481,13 @@ public class UnloadEngine implements Serializable {
 
     public boolean isBoxWmsEligible(String barcode) {
         String pallet = finalPalletForBarcode.get(barcode);
-        return pallet != null && isBarcodeInFinal(barcode) && validatedFinalPallets.contains(pallet);
+        return pallet != null && isBarcodeInFinal(barcode) && validatedFinalPallets.contains(pallet)
+                && WmsTemporaryLocation.isCanonical(wmsTemporaryForPallet(pallet));
+    }
+
+    public String wmsTemporaryForPallet(String pallet) {
+        PalletVerification proof = palletVerifications.get(pallet);
+        return proof == null || proof.wmsTemporaryLocation == null ? "" : proof.wmsTemporaryLocation;
     }
 
     public String physicalPositionForPallet(String pallet) {
@@ -540,9 +552,16 @@ public class UnloadEngine implements Serializable {
     }
 
     public ActionResult validateFinalPallet(String pallet, String responsible) {
+        return validateFinalPallet(pallet, responsible, "");
+    }
+
+    public ActionResult validateFinalPallet(String pallet, String responsible, String temporary) {
         if (validatedFinalPallets.contains(pallet)) {
             return new ActionResult(false, pallet, pallet + " ya fue verificada", false);
         }
+        String locationError = WmsTemporaryLocation.error(temporary);
+        if (!locationError.isEmpty()) return new ActionResult(false, pallet, locationError, false);
+        String location = WmsTemporaryLocation.normalize(temporary);
         String actor = responsible == null ? "" : responsible.trim();
         if (actor.isEmpty() || actor.length() > 80 || actor.contains("\n") || actor.contains("\r")) {
             return new ActionResult(false, pallet, "Indique nombre o iniciales del responsable (1–80 caracteres)", false);
@@ -564,14 +583,16 @@ public class UnloadEngine implements Serializable {
         readyFinalPallets.add(pallet);
         SimpleDateFormat stamp = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT);
         stamp.setTimeZone(TimeZone.getTimeZone("UTC"));
-        palletVerifications.put(pallet, new PalletVerification(actor, stamp.format(new Date()), "REVISION_FISICA", count));
-        return new ActionResult(true, pallet, pallet + " verificada por " + actor + " · " + count
-                + " cajas. La posición sigue ocupada hasta retirar la tarima.", false);
+        palletVerifications.put(pallet, new PalletVerification(actor, stamp.format(new Date()), "REVISION_FISICA", count, location));
+        return new ActionResult(true, pallet, pallet + " validada y cerrada por " + actor + " · " + count
+                + " cajas · temporal WMS " + location + ". No enviada al WMS. La posición sigue ocupada hasta retirar la tarima.", false);
     }
 
     public ActionResult releaseFinalPallet(String pallet) {
         if (!validatedFinalPallets.contains(pallet)) return new ActionResult(false, pallet, "Primero verifique el contenido de " + pallet, false);
         if (isPalletRetired(pallet)) return new ActionResult(false, pallet, pallet + " ya fue retirada", false);
+        if (!WmsTemporaryLocation.isCanonical(wmsTemporaryForPallet(pallet)))
+            return new ActionResult(false, pallet, "Verificación anterior sin temporal WMS: no puede retirarse con V0.11.", false);
         if (directCodeForPallet.containsKey(pallet)) {
             String code = directCodeForPallet.get(pallet);
             String position = footPositionForFinalPallet.get(pallet);

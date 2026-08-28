@@ -28,7 +28,7 @@ APP_DIR = Path(__file__).resolve().parent
 OFFICIAL_TEMPLATE = APP_DIR / "assets" / "templates" / "Plantilla_oficial_WMS_PutawayCrossDockImport.xlsx"
 
 
-st.set_page_config(page_title="Ilubox WMS Windows V0.10", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Ilubox WMS Windows V0.11", page_icon="📦", layout="wide")
 
 st.markdown(
     """
@@ -261,6 +261,7 @@ def render_pda_pallets(result, key_prefix):
             "Tarima": p["id"], "Posición física": p.get("physical_position", ""),
             "Registradas": p.get("scanned", 0), "Previstas": p.get("expected", 0),
             "Estado": p.get("status", ""),
+            "Temporal WMS": p.get("wms_temporary_location", ""),
         } for p in visible if p.get("formation") == formation]
         if rows:
             st.dataframe(rows, width="stretch", hide_index=True)
@@ -279,6 +280,8 @@ def render_pda_pallets(result, key_prefix):
             st.dataframe([{"Caja": event["Escaneo"], "Traslado": event["Tarima traslado"], "Estado físico": event["Estado físico"]}
                           for event in items], width="stretch", hide_index=True)
         proof = next(p for p in visible if p["id"] == pallet_id)
+        if result.schema_version == 4:
+            st.info(f"Temporal WMS registrada en PDA: {proof.get('wms_temporary_location') or 'PENDIENTE DE CIERRE'}")
         if proof.get("verified_by"):
             st.caption(f"Verificado por {proof['verified_by']} · {proof.get('verified_at', '')}")
     st.caption("Registrada no significa físicamente verificada. Verificada no significa ubicada o aceptada por el WMS.")
@@ -397,7 +400,7 @@ if mode == "👷 Operador":
 # MODO SUPERVISOR
 # ==========================
 else:
-    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.10")
+    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.11")
     st.caption(
         "La aplicación organiza la descarga, conserva el avance localmente y prepara una copia validada "
         "de la plantilla oficial. No se conecta ni ejecuta movimientos dentro del WMS."
@@ -637,14 +640,14 @@ else:
         st.info(
             "Este XLSX contiene exclusivamente las cuatro columnas oficiales de **Importación inteligente**. "
             "El reporte de descarga, el historial y el JSON de la PDA son archivos separados. "
-            "I01/D01 son posiciones físicas; la ubicación WMS se captura por tarima."
+            "I01/D01 son posiciones físicas; en V0.11 la temporal WMS procede del cierre de cada tarima en la PDA."
         )
 
         st.markdown("#### Resultado de la PDA")
         st.caption(
             "La PDA valida cada código individual y exporta un JSON al terminar. Al importarlo, "
             "Windows verifica contenedor, Packing List, rangos, duplicados y la revisión física de cada tarima. "
-            "V0.10 ya no exige confirmar cada distribución de TR."
+            "V0.11 conserva los traslados continuos y exige temporal al cierre de las definitivas."
         )
         pda_upload = st.file_uploader(
             "Resultado PDA (.json)",
@@ -676,7 +679,7 @@ else:
         pda_result = st.session_state.pda_results.get(result_key)
         source_events = []
         source_received = 0
-        source_label = "Resultado PDA V0.10 pendiente"
+        source_label = "Resultado PDA V0.11 pendiente"
         if pda_result and pda_result.ready:
             src1, src2 = st.columns([3, 1])
             src1.success(
@@ -701,7 +704,7 @@ else:
                 render_pda_pallets(pda_result, "supervisor_pda")
         else:
             st.warning(
-                "Importa un resultado PDA V0.10 (también se admite V0.9). El escaneo local de Windows permanece disponible para pruebas "
+                "Importa un resultado PDA V0.11 (también se admiten versiones anteriores bajo sus reglas). El escaneo local de Windows permanece disponible para pruebas "
                 "y auditoría, pero no sustituye la verificación física de cada tarima."
             )
 
@@ -714,17 +717,30 @@ else:
             placeholder="Ejemplo: PAS3902608080RT",
             key=f"putaway_order_{k}",
         )
-        default_location = f2.text_input(
-            "Ubicación WMS predeterminada",
-            value=config.get("default_location", ""),
-            placeholder="Ejemplo: 1-1-01",
-            help="Se aplicará a las tarimas que no tengan una ubicación específica.",
-            key=f"default_wms_location_{k}",
-        )
+        from_pda_temporaries = bool(pda_result and pda_result.ready and pda_result.schema_version == 4)
+        default_location = ""
+        if from_pda_temporaries:
+            f2.info("Temporales tomadas de la PDA. No se aplican ubicaciones predeterminadas ni sustituciones desde Windows.")
+        else:
+            if source_events:
+                st.warning("Resultado anterior a V0.11: las ubicaciones se asignan manualmente aquí; no fueron exigidas al cierre en la PDA.")
+            default_location = f2.text_input(
+                "Ubicación WMS predeterminada",
+                value=config.get("default_location", ""),
+                placeholder="Ejemplo: 1-1-01",
+                help="Solo para resultados anteriores a V0.11.",
+                key=f"default_wms_location_{k}",
+            )
 
         pallets_for_wms = summarize_pallets(source_events)
         location_by_pallet = {}
-        if pallets_for_wms:
+        if pallets_for_wms and from_pda_temporaries:
+            st.markdown("#### Temporales registradas al cerrar en la PDA")
+            captured = {p["id"]: p.get("wms_temporary_location", "") for p in pda_result.pallets}
+            st.dataframe([{**p, "Temporal WMS PDA": captured.get(p["Tarima"], "")}
+                          for p in pallets_for_wms], width="stretch", hide_index=True)
+            st.caption("Solo lectura. Compruebe que las temporales existen en la bodega correcta del WMS. El cierre de la PDA no ejecuta movimientos.")
+        elif pallets_for_wms:
             st.markdown("#### Asignación por tarima")
             st.caption(
                 "Cada identificador de tarima es estable aunque una posición física se reutilice. "
@@ -773,8 +789,8 @@ else:
 
         current_config = {
             "putaway_order": putaway_order.strip(),
-            "default_location": default_location.strip(),
-            "locations": location_by_pallet,
+            "default_location": config.get("default_location", "") if from_pda_temporaries else default_location.strip(),
+            "locations": config.get("locations", {}) if from_pda_temporaries else location_by_pallet,
         }
         st.session_state.wms_configs[container_key(container)] = current_config
         save_wms_config(container_key(container), current_config)

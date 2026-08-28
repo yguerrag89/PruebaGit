@@ -1,8 +1,8 @@
-name: Build Ilubox WMS V0.10 Windows and PDA
+name: Build Ilubox WMS V0.11 Windows and PDA
 
 on:
   push:
-    branches: [ v0-10-operador-continuo-q9 ]
+    branches: [ v0-11-temporal-obligatoria-q9 ]
   workflow_dispatch:
 
 permissions:
@@ -26,6 +26,7 @@ jobs:
           python -B test_wms_putaway.py
           python -B test_strict_pda_exchange.py
           python -B test_continuous_exchange.py
+          python -B test_temporary_exchange.py
           python -B test_streamlit_app.py
 
       - uses: actions/setup-java@v4
@@ -46,13 +47,14 @@ jobs:
       - name: Validate strict Android engine
         run: |
           mkdir -p test-bin
-          javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java android-project/tests/ContinuousEngineSelfTest.java
+          javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java android-project/tests/ContinuousEngineSelfTest.java android-project/tests/TemporaryLocationSelfTest.java
           java -cp test-bin EngineSelfTest
-          java -cp test-bin ContinuousEngineSelfTest android-project/tests/fixtures/v09-state.ser test-output/v010
+          java -cp test-bin ContinuousEngineSelfTest android-project/tests/fixtures/v09-state.ser test-output/v011
+          java -cp test-bin TemporaryLocationSelfTest android-project/tests/fixtures/v010-state.ser test-output/v011
 
       - name: Validate native Android export in Windows
         working-directory: windows-project
-        run: python -B test_continuous_exchange.py ../test-output/v010
+        run: python -B test_temporary_exchange.py ../test-output/v011
 
       - name: Build PDA APK
         working-directory: android-project
@@ -69,34 +71,33 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Ilubox-v0.10-validacion-Android
+          name: Ilubox-v0.11-validacion-Android
           path: android-project/app/build/reports/lint-results-debug.*
           if-no-files-found: ignore
 
       - name: Package deliverables
         run: |
-          git rm -f --ignore-unmatch -- release/Ilubox_WMS_PDA_v0.9_Q9.apk release/Ilubox_WMS_Windows_v0.9.zip release/SHA256SUMS.txt
-          mkdir -p release
-          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/Ilubox_WMS_PDA_v0.10_Q9.apk
-          (cd windows-project && zip -qr ../release/Ilubox_WMS_Windows_v0.10.zip . \
+          mkdir -p release/v0.11
+          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk
+          (cd windows-project && zip -qr ../release/v0.11/Ilubox_WMS_Windows_v0.11.zip . \
             -x '*/__pycache__/*' '*.pyc' 'data/sessions/*.json' 'data/sessions/*.tmp')
-          unzip -t release/Ilubox_WMS_PDA_v0.10_Q9.apk
-          unzip -t release/Ilubox_WMS_Windows_v0.10.zip
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose release/Ilubox_WMS_PDA_v0.10_Q9.apk
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/Ilubox_WMS_PDA_v0.10_Q9.apk
-          (cd release && sha256sum Ilubox_WMS_PDA_v0.10_Q9.apk Ilubox_WMS_Windows_v0.10.zip > SHA256SUMS.txt)
+          unzip -t release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk
+          unzip -t release/v0.11/Ilubox_WMS_Windows_v0.11.zip
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/v0.11/Ilubox_WMS_PDA_v0.11_Q9.apk
+          (cd release/v0.11 && sha256sum Ilubox_WMS_PDA_v0.11_Q9.apk Ilubox_WMS_Windows_v0.11.zip > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-WMS-v0.10-Windows-y-PDA
-          path: release/
+          name: Ilubox-WMS-v0.11-Windows-y-PDA
+          path: release/v0.11/
 
       - name: Publish compiled files on the branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -Af release
+          git add -- release/v0.11
           if ! git diff --cached --quiet; then
-            git commit -m "CI: agrega instalables V0.10 [skip ci]"
+            git commit -m "CI: agrega instalables V0.11 [skip ci]"
             git push
           fi

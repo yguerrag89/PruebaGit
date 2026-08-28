@@ -1,0 +1,28 @@
+{
+  "schema":"ilubox.pda.result.v4",
+  "version":4,
+  "container_id":"CONTINUO",
+  "record_signature":"162157eab26d75163e846509b6e34552502c741a92bf1d3f68fb4a6302ec1004",
+  "exported_at":"2026-08-28T02:20:00Z",
+  "engine_version":"0.11-temporal-obligatoria",
+  "verification_model":"FINAL_PALLET_WMS_TEMPORARY",
+  "wms_location_validation":"FORMAT_ONLY",
+  "individual_sequence":{"prefix":"U","start":1,"consecutive":true,"padding":3},
+  "progress":{"received":4,"expected":6,"in_final":0,"wms_eligible":0},
+  "active_transfer":"TR-03",
+  "transfers":[
+    {"id":"TR-01","closed":true,"boxes":2,"verified_boxes":0,"status":"PENDIENTE_VERIFICACION"},
+    {"id":"TR-02","closed":true,"boxes":2,"verified_boxes":0,"status":"PENDIENTE_VERIFICACION"},
+    {"id":"TR-03","closed":false,"boxes":0,"verified_boxes":0,"status":"EN_FORMACION"}
+  ],
+  "pallets":[
+    {"id":"T-01","formation":"TENDIDO","physical_position":"","wms_temporary_location":"","status":"REVISAR","expected":3,"original_expected":3,"scanned":3,"in_final":0,"validated":false,"retired":false,"closure_reason":"","verification_method":"","verified_by":"","verified_at":"","verified_boxes":0},
+    {"id":"T-02","formation":"TENDIDO","physical_position":"","wms_temporary_location":"","status":"EN FORMACIÓN","expected":3,"original_expected":3,"scanned":1,"in_final":0,"validated":false,"retired":false,"closure_reason":"","verification_method":"","verified_by":"","verified_at":"","verified_boxes":0}
+  ],
+  "accepted_events":[
+    {"raw_scan":"CHICOAU001","barcode":"CHICOAU001","code":"CHICOA","box_number":1,"final_pallet":"T-01","physical_position":"","wms_temporary_location":"","transfer_pallet":"TR-01","direct_to_final":false,"transfer_closed":true,"physical_state":"PENDIENTE_VERIFICAR","final_pallet_validated":false,"wms_eligible":false,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"CHICOAU002","barcode":"CHICOAU002","code":"CHICOA","box_number":2,"final_pallet":"T-01","physical_position":"","wms_temporary_location":"","transfer_pallet":"TR-02","direct_to_final":false,"transfer_closed":true,"physical_state":"PENDIENTE_VERIFICAR","final_pallet_validated":false,"wms_eligible":false,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"CHICOAU003","barcode":"CHICOAU003","code":"CHICOA","box_number":3,"final_pallet":"T-01","physical_position":"","wms_temporary_location":"","transfer_pallet":"TR-02","direct_to_final":false,"transfer_closed":true,"physical_state":"PENDIENTE_VERIFICAR","final_pallet_validated":false,"wms_eligible":false,"scanned_at":"2026-08-28 10:00:00"},
+    {"raw_scan":"CHICOBU001","barcode":"CHICOBU001","code":"CHICOB","box_number":1,"final_pallet":"T-02","physical_position":"","wms_temporary_location":"","transfer_pallet":"TR-01","direct_to_final":false,"transfer_closed":true,"physical_state":"PENDIENTE_VERIFICAR","final_pallet_validated":false,"wms_eligible":false,"scanned_at":"2026-08-28 10:00:00"}
+  ]
+}

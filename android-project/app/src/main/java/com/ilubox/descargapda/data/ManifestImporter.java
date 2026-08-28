@@ -40,7 +40,7 @@ public class ManifestImporter {
     public static ManifestData parse(InputStream in) throws Exception {
         JSONObject root = new JSONObject(readAll(in));
         if (!"ilubox.pda.manifest.v2".equals(root.optString("schema", ""))) {
-            throw new IllegalArgumentException("Use el archivo PDA generado por Windows V0.9");
+            throw new IllegalArgumentException("Use el archivo PDA generado por Windows V0.11 (manifiesto v2)");
         }
         if (root.optInt("version", 0) != 2 || !root.optBoolean("strict_individual_barcodes", false)) {
             throw new IllegalArgumentException("El manifiesto no exige códigos individuales; genere uno nuevo en Windows");
