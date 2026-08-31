@@ -10,7 +10,7 @@ from pathlib import Path
 from store import digest, encode
 
 ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "shared" if (ROOT / "shared").exists() else ROOT.parent / "windows-project"))
+sys.path.append(str(ROOT / "shared" if (ROOT / "shared").exists() else ROOT.parent / "windows-project"))
 from core.parser import CodeRecord
 from core.pda_exchange import parse_pda_result
 from core.wms_putaway import build_putaway_rows, export_official_putaway_xlsx

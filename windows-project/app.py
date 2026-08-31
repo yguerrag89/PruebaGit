@@ -28,7 +28,7 @@ APP_DIR = Path(__file__).resolve().parent
 OFFICIAL_TEMPLATE = APP_DIR / "assets" / "templates" / "Plantilla_oficial_WMS_PutawayCrossDockImport.xlsx"
 
 
-st.set_page_config(page_title="Ilubox WMS Windows V0.11", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Ilubox WMS Windows V0.13", page_icon="📦", layout="wide")
 
 st.markdown(
     """
@@ -400,7 +400,7 @@ if mode == "👷 Operador":
 # MODO SUPERVISOR
 # ==========================
 else:
-    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.11")
+    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.13 Manual Asistida")
     st.caption(
         "La aplicación organiza la descarga, conserva el avance localmente y prepara una copia validada "
         "de la plantilla oficial. No se conecta ni ejecuta movimientos dentro del WMS."
@@ -679,7 +679,7 @@ else:
         pda_result = st.session_state.pda_results.get(result_key)
         source_events = []
         source_received = 0
-        source_label = "Resultado PDA V0.11 pendiente"
+        source_label = "Resultado PDA V0.13 pendiente"
         if pda_result and pda_result.ready:
             src1, src2 = st.columns([3, 1])
             src1.success(
@@ -704,7 +704,7 @@ else:
                 render_pda_pallets(pda_result, "supervisor_pda")
         else:
             st.warning(
-                "Importa un resultado PDA V0.11 (también se admiten versiones anteriores bajo sus reglas). El escaneo local de Windows permanece disponible para pruebas "
+                "Importa un resultado PDA V0.13 (también se admiten versiones anteriores bajo sus reglas). El escaneo local de Windows permanece disponible para pruebas "
                 "y auditoría, pero no sustituye la verificación física de cada tarima."
             )
 
@@ -791,17 +791,29 @@ else:
             "putaway_order": putaway_order.strip(),
             "default_location": config.get("default_location", "") if from_pda_temporaries else default_location.strip(),
             "locations": config.get("locations", {}) if from_pda_temporaries else location_by_pallet,
+            "partial_reason": config.get("partial_reason", ""),
         }
-        st.session_state.wms_configs[container_key(container)] = current_config
-        save_wms_config(container_key(container), current_config)
 
         is_partial = source_received < expected
         partial_ack = True
+        partial_reason = ""
         if is_partial:
             partial_ack = st.checkbox(
                 f"Confirmo que esta es una carga parcial ({source_received} de {expected} cajas).",
                 key=f"partial_ack_{k}",
             )
+            partial_reason = st.text_input(
+                "Motivo del cierre parcial",
+                value=config.get("partial_reason", ""),
+                placeholder="Ejemplo: faltante físico confirmado al terminar el contenedor",
+                key=f"partial_reason_{k}",
+            ).strip()
+            if partial_ack and len(partial_reason) < 8:
+                st.error("Escriba un motivo de al menos 8 caracteres para autorizar la plantilla parcial.")
+
+        current_config["partial_reason"] = partial_reason
+        st.session_state.wms_configs[container_key(container)] = current_config
+        save_wms_config(container_key(container), current_config)
 
         records_by_code = {record.code.upper(): record for record in container.records}
         build_result = build_putaway_rows(
@@ -812,7 +824,7 @@ else:
             location_by_pallet=location_by_pallet,
             received=source_received,
             expected=expected,
-            allow_partial=partial_ack,
+            allow_partial=partial_ack and (not is_partial or len(partial_reason) >= 8),
             require_final_validation=True,
         )
 

@@ -10,6 +10,8 @@ py -B test_continuous_exchange.py
 if errorlevel 1 goto :error
 py -B test_temporary_exchange.py
 if errorlevel 1 goto :error
+py -B test_manual_assisted_exchange.py
+if errorlevel 1 goto :error
 py -B test_streamlit_app.py
 if errorlevel 1 goto :error
 echo.

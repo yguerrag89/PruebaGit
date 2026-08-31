@@ -1,0 +1,23 @@
+{
+  "schema":"ilubox.pda.result.v4",
+  "version":4,
+  "container_id":"MANUAL-WMS",
+  "record_signature":"98ee7b42632554508c38e91182ea9367b2647ff60dd1b75d5d7d18110c703177",
+  "exported_at":"2026-08-29T21:25:41Z",
+  "engine_version":"0.13-manual-asistida-local",
+  "verification_model":"FINAL_PALLET_WMS_TEMPORARY",
+  "wms_location_validation":"FORMAT_ONLY",
+  "individual_sequence":{"prefix":"U","start":1,"consecutive":true,"padding":3},
+  "progress":{"received":2,"expected":2,"in_final":2,"wms_eligible":2},
+  "active_transfer":"TR-01",
+  "transfers":[
+    {"id":"TR-01","closed":false,"boxes":0,"verified_boxes":0,"status":"EN_FORMACION"}
+  ],
+  "pallets":[
+    {"id":"T-01","formation":"PIE","physical_position":"I01","wms_temporary_location":"2B-TMP-M1","status":"VERIFICADA","expected":2,"original_expected":2,"scanned":2,"in_final":2,"validated":true,"retired":false,"closure_reason":"","verification_method":"REVISION_FISICA","verified_by":"OP-M","verified_at":"2026-08-29T21:25:41Z","verified_boxes":2}
+  ],
+  "accepted_events":[
+    {"raw_scan":"CAJAU001","barcode":"CAJAU001","code":"CAJA","box_number":1,"final_pallet":"T-01","physical_position":"I01","wms_temporary_location":"2B-TMP-M1","transfer_pallet":"","direct_to_final":true,"transfer_closed":false,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-29T10:00:00Z"},
+    {"raw_scan":"CAJAU002","barcode":"CAJAU002","code":"CAJA","box_number":2,"final_pallet":"T-01","physical_position":"I01","wms_temporary_location":"2B-TMP-M1","transfer_pallet":"","direct_to_final":true,"transfer_closed":false,"physical_state":"EN_DEFINITIVA","final_pallet_validated":true,"wms_eligible":true,"scanned_at":"2026-08-29T10:00:00Z"}
+  ]
+}

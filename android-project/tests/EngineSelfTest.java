@@ -1,4 +1,5 @@
 import com.ilubox.descargapda.core.*;
+import java.io.*;
 import java.util.*;
 
 public class EngineSelfTest {
@@ -7,7 +8,7 @@ public class EngineSelfTest {
     }
 
     public static void main(String[] args) {
-        ok("0.11-temporal-obligatoria".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
+        ok("0.13-manual-asistida-local".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
         Settings s = new Settings();
         List<CodeRecord> records = Arrays.asList(
             new CodeRecord("BIG", 5, 2.5, 0.5, null, "", ""),
@@ -108,8 +109,11 @@ public class EngineSelfTest {
         ok("I01".equals(m.getManualActivePosition()), "tarima activa inicial");
         ScanResult m1 = m.scanManual("MANAU001", "I01", false);
         ok(m1.ok && "I01".equals(m1.position), "MANA entra manualmente en I01");
+        ok("T-01".equals(m1.finalPallet) && "T-01".equals(m.manualPalletAtPosition("I01")),
+                "manual separa T-01 de I01");
         ScanResult m2 = m.scanManual("MANBU001", "I01", false);
-        ok(m2.ok && "I01".equals(m2.position), "códigos distintos pueden compartir I01");
+        ok(m2.ok && "I01".equals(m2.position) && "T-01".equals(m2.finalPallet),
+                "códigos distintos pueden compartir T-01 en I01");
 
         ScanResult warn = m.scanManual("MANAU002", "I02", false);
         ok(!warn.ok && "CÓDIGO EN OTRA TARIMA".equals(warn.status), "advierte código ya ubicado");
@@ -128,13 +132,55 @@ public class EngineSelfTest {
         ok(m.findPosition("I02").boxesForCode("MANA") == 2, "I02 conserva 2 cajas MANA");
 
         ScanResult dupManual = m.scanManual("MANAU004", "I01", false);
-        ok(!dupManual.ok && "DUPLICADA".equals(dupManual.status) && "I02".equals(dupManual.position),
-                "duplicada muestra tarima física original");
+        ok(!dupManual.ok && "DUPLICADA".equals(dupManual.status) && "T-02".equals(dupManual.position)
+                && "I02".equals(dupManual.physicalPosition), "duplicada muestra T estable y posición física");
 
         ActionResult closeI01 = m.closePositionEarly("I01");
-        ok(closeI01.ok, "cerrar tarima manual");
+        ok(closeI01.ok && m.isPalletReadyForVerification("T-01"), "cerrar tarima manual");
+        ok(!m.validateFinalPallet("T-01", "OP", "I01").ok, "I01 no puede usarse como temporal");
+        ok(m.validateFinalPallet("T-01", "OP", "2B-TMP-01").ok && m.wmsEligibleBoxCount() == 3,
+                "revisión física manual habilita solo T-01");
+        ok(!m.reopenPosition("I01").ok, "una T manual validada no puede reabrirse");
+        ok(m.releaseManualPalletAtPosition("I01").ok && m.findPosition("I01").isFree(),
+                "retiro libera I01 sin borrar T-01");
         ScanResult afterClosed = m.scanManual("MANBU002", "I02", false);
         ok(afterClosed.ok, "código puede continuar en otra tarima si la anterior está cerrada");
+
+        UnloadEngine mw = new UnloadEngine("MANUAL-WMS", Arrays.asList(
+                new CodeRecord("CAJA", 2, 0.20, 0.10, 10.0, "", "")), s, 1, 0, "MANUAL");
+        ok(mw.scanManual("CAJAU001", "I01", false).ok && mw.scanManual("CAJAU002", "I01", false).ok,
+                "manual completa captura individual");
+        List<PdaResultWriter.AcceptedScan> manualScans = new ArrayList<>();
+        for (Map.Entry<String, UnloadEngine.ScanMeta> entry : mw.scannedUniqueBarcodes.entrySet()) {
+            UnloadEngine.ScanMeta meta = entry.getValue();
+            manualScans.add(new PdaResultWriter.AcceptedScan(meta.rawScan, entry.getKey(), meta.code,
+                    meta.boxNumber, "2026-08-29T10:00:00Z"));
+        }
+        boolean manualOpenRefused = false;
+        try { PdaResultWriter.write(new ByteArrayOutputStream(), mw, manualScans); }
+        catch (Exception expected) {
+            manualOpenRefused = expected instanceof IllegalStateException
+                    && expected.getMessage().contains("sin revisión física");
+        }
+        ok(manualOpenRefused, "no exporta una T manual abierta");
+        ok(mw.validateFinalPallet("T-01", "OP-M", "2B-TMP-M1").ok, "valida T manual con temporal");
+        ByteArrayOutputStream manualJson = new ByteArrayOutputStream();
+        try { PdaResultWriter.write(manualJson, mw, manualScans); }
+        catch (Exception failure) { throw new AssertionError("resultado manual v4", failure); }
+        String manualText = manualJson.toString(java.nio.charset.StandardCharsets.UTF_8);
+        ok(manualText.contains("\"final_pallet\":\"T-01\"")
+                && manualText.contains("\"physical_position\":\"I01\"")
+                && manualText.contains("\"wms_temporary_location\":\"2B-TMP-M1\""),
+                "JSON manual conserva T, posición y temporal separadas");
+        if (args.length > 0) {
+            try {
+                java.nio.file.Path output = java.nio.file.Path.of(args[0]);
+                java.nio.file.Files.createDirectories(output.getParent());
+                java.nio.file.Files.write(output, manualJson.toByteArray());
+            } catch (Exception failure) {
+                throw new AssertionError("guardar fixture manual v4", failure);
+            }
+        }
 
         // V0.4 BUFFER MODULAR: 1 código por sector, unitarios directos, completos listos y promoción de grandes.
         List<CodeRecord> bufferRecords = Arrays.asList(
@@ -243,6 +289,6 @@ public class EngineSelfTest {
         }
         ok(sawDirect && sawTendido, "tablero separa al pie y tendido final");
 
-        System.out.println("OK Android core V0.11: AUTO/MANUAL/BUFFER + TRASLADO continuo + temporal WMS obligatoria");
+        System.out.println("OK Android core V0.13: MANUAL ASISTIDA + AUTO/BUFFER/TRASLADO + temporal WMS");
     }
 }

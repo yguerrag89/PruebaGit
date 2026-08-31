@@ -5,6 +5,15 @@ para coexistir con Nginx, Streamlit, Node y Tailscale ya instalados. No es una
 certificación de producción. Antes de usar mercancía real, completar las pruebas
 de aceptación al final de esta guía.
 
+## Prueba previa en Windows, sin tocar Ubuntu
+
+Antes del despliegue puede ejecutarse el laboratorio local incluido. Descomprima el
+ZIP, abra `server-project` y ejecute `INICIAR_LABORATORIO_WINDOWS.bat`. El navegador
+usa `http://127.0.0.1:8876`; la base queda aislada en
+`%LOCALAPPDATA%\IluboxLabV012R2\datos`. No publica un servicio en la red, no usa Docker,
+no se conecta a XLWMS y no altera otras aplicaciones. La guía paso a paso y sus
+límites están en `LABORATORIO_WINDOWS.md`.
+
 ## Qué cambia
 
 - Supervisor en navegador Windows: Packing List XLSX → plan inicial → asignar una

@@ -406,7 +406,7 @@ public class MainActivity extends ComponentActivity {
         title.setSingleLine(true);
         r.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(60, 38)));
 
-        TextView sub = tv("V0.12 · servidor LAN + temporal WMS", rsp(18, 13), C_GRAY, true);
+        TextView sub = tv("V0.13 · manual asistida local", rsp(18, 13), C_GRAY, true);
         sub.setGravity(Gravity.CENTER);
         r.addView(sub, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(34, 24)));
         r.addView(spacer(compactPda() ? 8 : 24));
@@ -420,10 +420,6 @@ public class MainActivity extends ComponentActivity {
         intro.setBackground(box(Color.WHITE, C_BORDER, 12));
         r.addView(intro, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         r.addView(spacer(compactPda() ? 10 : 22));
-
-        Button lan = button("SERVIDOR · CONECTAR DESCARGA", C_GREEN, Color.WHITE);
-        lan.setOnClickListener(v -> showLanDialog());
-        r.addView(lan);
 
         Button importBtn = button(compactPda() ? "📂  IMPORTAR .JSON" : "📂  IMPORTAR DESCARGA (.json)", C_BLUE, Color.WHITE);
         importBtn.setOnClickListener(v -> chooseManifest());
@@ -933,13 +929,9 @@ public class MainActivity extends ComponentActivity {
             activePositionButton = button("TARIMA ACTIVA", C_BLUE, Color.WHITE);
             activePositionButton.setOnClickListener(v -> showManualPositionPicker());
             r.addView(activePositionButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(46, 38)));
-            Button temporal = button("TEMPORAL DE ESTA TARIMA", Color.WHITE, C_BLUE);
-            temporal.setBackground(box(Color.WHITE, C_BLUE, 9));
-            temporal.setOnClickListener(v -> showTemporalDialog(engine.getManualActivePosition(), false, null));
-            r.addView(temporal, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(42, 34)));
-            TextView manualHint = tv("La temporal puede capturarse al inicio o antes de liberar la tarima", rsp(11, 9), C_GRAY, false);
+            TextView manualHint = tv("Seleccione la posición una vez. La T-xxx permanece activa hasta cerrarla; no reescanee posición entre cajas.", rsp(11, 9), C_GRAY, false);
             manualHint.setGravity(Gravity.CENTER);
-            r.addView(manualHint, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(22, 18)));
+            r.addView(manualHint, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(34, 26)));
         } else {
             activePositionButton = null;
         }
@@ -1063,7 +1055,8 @@ public class MainActivity extends ComponentActivity {
         ArrayList<String> labels = new ArrayList<>();
         for (Position p : engine.positions) {
             if (p.enabled && !p.waitingRemoval) {
-                labels.add(p.label() + (p.isFree() ? " · LIBRE" : " · " + p.boxesOnCurrentPallet + " cajas"));
+                String pallet = engine.manualPalletAtPosition(p.label());
+                labels.add(p.label() + (p.isFree() ? " · LIBRE" : " · " + pallet + " · " + p.boxesOnCurrentPallet + " cajas"));
             }
         }
         if (labels.isEmpty()) {
@@ -1182,11 +1175,14 @@ public class MainActivity extends ComponentActivity {
         if (resultBox != null) resultBox.setBackground(box(fill, border, 14));
 
         if (x.ok) {
-            positionResult.setText(x.position);
+            positionResult.setText(engine.isManualMode() && x.finalPallet != null && !x.finalPallet.isEmpty()
+                    ? x.finalPallet + " · " + x.physicalPosition : x.position);
             positionResult.setTextColor(main);
             statusResult.setText(x.message);
             codeResult.setText((x.normalizedBarcode == null || x.normalizedBarcode.isEmpty()) ? x.code : x.normalizedBarcode);
-            countResult.setText(engine.isTransferMode()
+            countResult.setText(engine.isManualMode() && x.finalPallet != null && !x.finalPallet.isEmpty()
+                    ? "Tarima: " + engine.palletScannedCount(x.finalPallet) + " cajas"
+                    : engine.isTransferMode()
                     ? "Tarima: " + engine.palletScannedCount(x.finalPallet) + " / " + engine.expectedForPallet(x.finalPallet) + " previstas"
                     : x.received + " / " + x.expected);
         } else if ("DUPLICADA".equals(x.status)) {
@@ -1262,11 +1258,11 @@ public class MainActivity extends ComponentActivity {
         if (engine.isManualMode() && activePositionButton != null) {
             String active = engine.getManualActivePosition();
             Position p = engine.findPosition(active);
+            String pallet = engine.manualPalletAtPosition(active);
             String detail = "";
             if (p != null) detail = " · " + p.boxesOnCurrentPallet + " cajas · " + p.reservedCodes.size() + " cód.";
-            String tmp = active.isEmpty() ? "" : db.currentTemporalForPosition(active);
-            if (!tmp.isEmpty()) detail += " · TEMP " + tmp;
-            activePositionButton.setText("TARIMA ACTIVA · " + (active.isEmpty() ? "SELECCIONAR" : active) + detail);
+            activePositionButton.setText("ACTIVA · " + (active.isEmpty() ? "SELECCIONAR"
+                    : (pallet.isEmpty() ? "NUEVA EN " + active : pallet + " · " + active)) + detail);
         }
         refreshPendingReady();
         if (changeTransferButton != null && engine.isTransferMode()) {
@@ -1307,7 +1303,13 @@ public class MainActivity extends ComponentActivity {
 
         List<Position> pending = engine.pendingRemovalPositions();
         for (Position p : pending) {
-            Button b = button("✓  " + p.label() + " · POSICIÓN LISTA", C_GREEN, Color.WHITE);
+            String pallet = engine.isManualMode() ? engine.manualPalletAtPosition(p.label()) : "";
+            boolean verified = !pallet.isEmpty() && engine.validatedFinalPallets.contains(pallet);
+            String label = engine.isManualMode()
+                    ? (verified ? "✓  RETIRAR " + pallet + " · LIBERAR " + p.label()
+                                : "REVISAR " + pallet + " · " + p.label())
+                    : "✓  " + p.label() + " · POSICIÓN LISTA";
+            Button b = button(label, verified ? C_GREEN : C_ORANGE, Color.WHITE);
             b.setOnClickListener(v -> markPositionReadyWithTemporal(p.label()));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(50, 42));
             lp.setMargins(0, dp(4), 0, dp(4));
@@ -1526,7 +1528,8 @@ public class MainActivity extends ComponentActivity {
         }
         card.setBackground(box(fill, stroke, 8));
 
-        TextView label = tv(c.label, rsp(18, 15), txt, true);
+        String manualPallet = engine != null && engine.isManualMode() ? engine.manualPalletAtPosition(c.label) : "";
+        TextView label = tv(c.label + (manualPallet.isEmpty() ? "" : " · " + manualPallet), rsp(18, 15), txt, true);
         label.setGravity(Gravity.CENTER);
         TextView title = tv(c.title, rsp(11, 9), txt, true);
         title.setGravity(Gravity.CENTER);
@@ -1582,10 +1585,16 @@ public class MainActivity extends ComponentActivity {
         }
         sb.append("\n");
 
+        if (engine != null && engine.isManualMode()) {
+            String pallet = engine.manualPalletAtPosition(p.label());
+            if (!pallet.isEmpty()) sb.append("Tarima definitiva: ").append(pallet).append("\n");
+        }
+
         if (p.isFree()) return sb.toString();
         sb.append("Tarima local en posición: ").append(p.palletSeq + 1).append(" · ").append(p.kind).append("\n");
         if (engine != null && engine.isManualMode()) {
-            String tmp = db.currentTemporalForPosition(p.label());
+            String pallet = engine.manualPalletAtPosition(p.label());
+            String tmp = pallet.isEmpty() ? "" : engine.wmsTemporaryForPallet(pallet);
             sb.append("Temporal: ").append(tmp.isEmpty() ? "PENDIENTE" : tmp).append("\n");
         }
         sb.append("Cajas en esta tarima: ").append(p.boxesOnCurrentPallet).append("\n");
@@ -1627,7 +1636,11 @@ public class MainActivity extends ComponentActivity {
 
         if (!inSupervisor) {
             if (p.waitingRemoval) {
-                b.setPositiveButton("✓ POSICIÓN LISTA", (d, w) -> markPositionReadyWithTemporal(p.label()));
+                String pallet = engine.isManualMode() ? engine.manualPalletAtPosition(p.label()) : "";
+                String action = !pallet.isEmpty() && engine.isFinalPalletValidated(pallet)
+                        ? "RETIRAR Y LIBERAR " + p.label()
+                        : "VALIDAR TARIMA";
+                b.setPositiveButton(action, (d, w) -> markPositionReadyWithTemporal(p.label()));
             } else if (!p.isFree() && p.boxesOnCurrentPallet > 0) {
                 b.setPositiveButton("TARIMA LLENA / NO CABE MÁS", (d, w) -> {
                     ActionResult a = engine.closePositionEarly(p.label());
@@ -1739,17 +1752,10 @@ public class MainActivity extends ComponentActivity {
         r.addView(spacer(compactPda() ? 4 : 7));
 
         if (engine.isManualMode()) {
-            String order = db.latestPutawayOrder();
-            Button putaway = button(order.isEmpty() ? "ORDEN PUTAWAY WMS" : ("WMS · " + order), Color.WHITE, C_BLUE);
-            putaway.setBackground(box(Color.WHITE, C_BLUE, 9));
-            putaway.setOnClickListener(v -> showPutawayOrderDialog());
-            r.addView(putaway, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(44, 36)));
-            r.addView(spacer(compactPda() ? 4 : 7));
-
-            Button exportWms = button("⬇  PLANTILLA WMS PUTAWAY", C_GREEN, Color.WHITE);
-            exportWms.setOnClickListener(v -> exportWmsTemplate());
-            r.addView(exportWms, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(46, 38)));
-            TextView wmsHint = tv("Formato PutawayCrossDockImport · exige temporal en cada tarima", rsp(11, 9), C_GRAY, false);
+            Button exportResult = button("⬇  RESULTADO JSON PARA WINDOWS", C_GREEN, Color.WHITE);
+            exportResult.setOnClickListener(v -> exportPdaResult());
+            r.addView(exportResult, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(46, 38)));
+            TextView wmsHint = tv("La plantilla WMS se revisa y genera exclusivamente en Windows", rsp(11, 9), C_GRAY, false);
             wmsHint.setGravity(Gravity.CENTER);
             r.addView(wmsHint, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(24, 18)));
         }
@@ -1778,7 +1784,7 @@ public class MainActivity extends ComponentActivity {
         newUnload.setBackground(box(Color.WHITE, C_RED, 10));
         newUnload.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle("Nueva descarga")
-                .setMessage("La descarga actual quedará reemplazada. Exporta primero CSV, reporte Excel y plantilla WMS si necesitas conservarlos.")
+                .setMessage("La descarga actual quedará reemplazada. Exporta primero el resultado JSON y los reportes si necesitas conservarlos.")
                 .setNegativeButton("Cancelar", null)
                 .setPositiveButton("Continuar", (d, which) -> chooseManifest())
                 .show());
@@ -2375,26 +2381,9 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void exportWmsTemplate() {
-        if (!engine.isManualMode()) {
-            Toast.makeText(this, "La plantilla WMS por tarima está habilitada para modo MANUAL", Toast.LENGTH_LONG).show();
-            return;
-        }
-        String order = db.latestPutawayOrder();
-        if (order.isEmpty()) {
-            showPutawayOrderDialog();
-            Toast.makeText(this, "Capture la Orden Putaway y vuelva a exportar", Toast.LENGTH_LONG).show();
-            return;
-        }
-        int missing = db.missingTemporalPallets();
-        if (missing > 0) {
-            Toast.makeText(this, "Faltan temporales en " + missing + " tarima(s). Complételas antes de generar WMS.", Toast.LENGTH_LONG).show();
-            return;
-        }
-        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        i.addCategory(Intent.CATEGORY_OPENABLE);
-        i.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-        i.putExtra(Intent.EXTRA_TITLE, "WMS_Putaway_" + engine.containerId + ".xlsx");
-        startActivityForResult(i, REQ_EXPORT_WMS);
+        Toast.makeText(this,
+                "La PDA exporta únicamente el resultado JSON. Revíselo y genere la plantilla oficial WMS en Windows.",
+                Toast.LENGTH_LONG).show();
     }
 
     private void showPutawayOrderDialog() {
@@ -2445,8 +2434,21 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void markPositionReadyWithTemporal(String label) {
-        if (engine != null && engine.isManualMode() && db.currentTemporalForPosition(label).isEmpty()) {
-            showTemporalDialog(label, true, () -> markPositionReadyWithTemporal(label));
+        if (engine != null && engine.isManualMode()) {
+            String pallet = engine.manualPalletAtPosition(label);
+            if (pallet.isEmpty()) {
+                Toast.makeText(this, "La posición no tiene una T-xxx activa", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (!engine.validatedFinalPallets.contains(pallet)) {
+                if (!engine.isPalletReadyForVerification(pallet)) {
+                    Toast.makeText(this, "Primero marque la tarima LLENA / NO CABE MÁS", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                showVerifyPallet(pallet);
+                return;
+            }
+            commitOperation("TARIMA RETIRADA", () -> engine.releaseManualPalletAtPosition(label));
             return;
         }
         ActionResult a = engine.markPositionReady(label);

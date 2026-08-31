@@ -38,7 +38,17 @@ public final class PdaResultWriter {
     }
 
     public static void write(OutputStream output, UnloadEngine engine, List<AcceptedScan> scans) throws Exception {
-        if (!engine.isTransferMode()) throw new IllegalStateException("El resultado WMS v4 requiere modo TRASLADO. Use CSV/Excel para los modos de comparación.");
+        if (!engine.isTransferMode() && !engine.isManualMode()) {
+            throw new IllegalStateException("El resultado WMS v4 requiere modo TRASLADO o MANUAL ASISTIDA.");
+        }
+        if (engine.isManualMode()) {
+            for (UnloadEngine.FinalPalletView pallet : engine.finalPalletViews()) {
+                if (pallet.scanned > 0 && !pallet.validated) {
+                    throw new IllegalStateException(pallet.label
+                            + " sigue abierta o sin revisión física. Cierre y valide todas las tarimas antes de exportar a Windows.");
+                }
+            }
+        }
         for (String pallet : engine.validatedFinalPallets) {
             if (!WmsTemporaryLocation.isCanonical(engine.wmsTemporaryForPallet(pallet)))
                 throw new IllegalStateException("La sesión contiene una verificación anterior sin temporal WMS (" + pallet
@@ -111,7 +121,7 @@ public final class PdaResultWriter {
             AcceptedScan scan = scans.get(i);
             String pallet = engine.finalPalletForBarcode.get(scan.barcode);
             String transfer = engine.transferForBarcode.get(scan.barcode);
-            boolean direct = engine.directFinalCodes.contains(scan.code);
+            boolean direct = engine.directFinalCodes.contains(scan.code) || engine.isManualFinalPallet(pallet);
             body.append("    {\"raw_scan\":").append(json(scan.raw))
                     .append(",\"barcode\":").append(json(scan.barcode))
                     .append(",\"code\":").append(json(scan.code))

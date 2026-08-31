@@ -14,12 +14,12 @@ android {
     compileSdk 36
 
     defaultConfig {
-        // Piloto paralelo: conserva V0.10 y no depende de su firma debug.
-        applicationId 'com.ilubox.descargapda.v012'
+        // Piloto paralelo: no reemplaza instalaciones anteriores ni copia sus sesiones.
+        applicationId 'com.ilubox.descargapda.v013'
         minSdk 23
         targetSdk 36
-        versionCode 14
-        versionName '0.12-servidor-lan-q9'
+        versionCode 15
+        versionName '0.13-manual-asistida-local-q9'
     }
 
     buildTypes {

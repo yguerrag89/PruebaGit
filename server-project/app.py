@@ -1,12 +1,9 @@
 """LAN pilot. Run behind the supplied HTTPS-only Nginx virtual host."""
-import io
 import json
-import math
 import os
 import secrets
 import sqlite3
 import time
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -19,10 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from protocol import (MAX_BYTES, Rejected, accept_snapshot, claim_session, create_session,
                       export_wms, records_for)
 from store import Store, digest, password_hash
-from core.parser import parse_xlsx_bytes
-from core.parser import _find_header, norm_text
-from core.xlsx_reader import read_xlsx_rows
-from core.strict_scan import canonical_scan
+from packing import PackingError, parse_strict_packing
 from core.optimizer import Settings, transfer_layout_summary
 from core.pda_exchange import build_pda_manifest
 
@@ -156,46 +150,15 @@ def create_app(db_path=None, origin=None):
                 raise ValueError()
             content = await file.read()
             await form.close()
-            # XLSX is a ZIP: bound expanded size and reject malformed structures.
-            with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                members = archive.infolist()
-                if len(members) > 1000 or sum(x.file_size for x in members) > 64 * 1024 * 1024:
-                    raise ValueError()
-            # The desktop parser is permissive for exploration. A server assignment
-            # must not silently round fractional box counts or skip malformed rows.
-            for sheet_name, rows in read_xlsx_rows(content, max_rows=None, max_cols=40):
-                header = _find_header(rows)
-                if not header:
-                    continue
-                _, start, columns = header
-                if not all(k in columns for k in ("code", "boxes", "cbm")):
-                    raise Rejected(f"{sheet_name}: faltan código, cajas o CBM.", 422)
-                for number, row in enumerate(rows[start+1:], start+2):
-                    code, boxes, cbm = [norm_text(row[columns[k]]) for k in ("code", "boxes", "cbm")]
-                    if not code and not boxes and not cbm:
-                        continue
-                    try:
-                        count, volume = float(boxes), float(cbm)
-                        if not code or code.upper() in {"TOTAL", "TOTALES", "合计", "总计"} or not math.isfinite(count) or not count.is_integer() or not 1 <= count <= 999 or not math.isfinite(volume) or volume <= 0:
-                            raise ValueError()
-                    except ValueError:
-                        raise Rejected(f"{sheet_name}, fila {number}: corrija cajas/CBM o retire las filas de totales; no se omitió la fila.", 422)
-            containers = await run_in_threadpool(parse_xlsx_bytes, content, Path(file.filename).name)
-            if len(containers) != 1:
-                raise Rejected("Separe el archivo para dejar un solo contenedor por carga.", 422)
-            container = containers[0]
-            if container.warnings:
-                raise Rejected("Revise el Packing List antes de asignarlo: " + "; ".join(container.warnings[:8]), 422)
-            if not container.records or container.total_boxes > 10000:
-                raise Rejected("Piloto limitado a 10 000 cajas por descarga.", 422)
-            if any(not 1 <= r.boxes <= 999 or r.code != canonical_scan(r.code) or not math.isfinite(r.cbm_per_box) or r.cbm_per_box <= 0 or not math.isfinite(r.cbm) or r.cbm <= 0 for r in container.records):
-                raise Rejected("Todas las líneas necesitan cajas y volumen positivo para planificar tarimas.", 422)
+            container = await run_in_threadpool(parse_strict_packing, content, Path(file.filename).name)
             identifier, pairing = create_session(store, json.loads(build_pda_manifest(container, Settings())), left, right)
         except Rejected:
             raise
         except sqlite3.IntegrityError:
             raise Rejected("Ya existe una descarga activa de este contenedor.")
-        except (ValueError, TypeError, KeyError, zipfile.BadZipFile, OSError):
+        except PackingError as exc:
+            raise Rejected(str(exc), 422)
+        except (ValueError, TypeError, KeyError, OSError):
             raise Rejected("Packing List o posiciones inválidos. Revise el archivo.", 422)
         finally:
             await form.close()
