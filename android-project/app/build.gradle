@@ -15,11 +15,11 @@ android {
 
     defaultConfig {
         // Piloto paralelo: no reemplaza instalaciones anteriores ni copia sus sesiones.
-        applicationId 'com.ilubox.descargapda.v014'
+        applicationId 'com.ilubox.descargapda.v015'
         minSdk 23
         targetSdk 36
-        versionCode 16
-        versionName '0.14-optimizacion-global-q9'
+        versionCode 17
+        versionName '0.15-operacion-simplificada-q9'
     }
 
     buildTypes {

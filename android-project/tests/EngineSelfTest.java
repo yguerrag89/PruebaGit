@@ -8,7 +8,7 @@ public class EngineSelfTest {
     }
 
     public static void main(String[] args) {
-        ok("0.14-optimizacion-global-replanificacion".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
+        ok("0.15-operacion-simplificada-q9".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
         Settings s = new Settings();
         List<CodeRecord> records = Arrays.asList(
             new CodeRecord("BIG", 5, 2.5, 0.5, null, "", ""),
@@ -226,6 +226,7 @@ public class EngineSelfTest {
         List<CodeRecord> transferRecords = Arrays.asList(
             new CodeRecord("GRANDE", 5, 2.00, 0.40, 30.0, "", ""),
             new CodeRecord("GRANDE2", 3, 2.25, 0.75, 30.0, "", ""),
+            new CodeRecord("GRANDE3", 3, 2.25, 0.75, 30.0, "", ""),
             new CodeRecord("CHICO", 3, 0.30, 0.10, 5.0, "", "")
         );
         UnloadEngine t = new UnloadEngine("TRASLADO", transferRecords, s, 1, 0, "TRASLADO");
@@ -243,7 +244,8 @@ public class EngineSelfTest {
         ok(tg1.ok && tg1.position.equals(tg.position), "Uxxx aleatorios permanecen en tarima activa");
 
         ScanResult noFoot = t.scanTransfer("GRANDE2U001");
-        ok(!noFoot.ok && "SIN POSICIÓN AL PIE".equals(noFoot.status), "límite físico al pie");
+        ok(noFoot.ok && "CONTINGENCIA TR".equals(noFoot.status) && !noFoot.directToFinal
+                && t.isOverflowTendidoPallet(noFoot.finalPallet), "sin posición al pie usa contingencia trazable");
 
         ok("PENDIENTE_VERIFICAR".equals(t.boxPhysicalState("GRANDEU004")), "directa tampoco prueba presencia por escaneo");
         ActionResult closedDirect = t.closeDirectPalletEarly(tg.position, "Falta de espacio");
@@ -251,9 +253,9 @@ public class EngineSelfTest {
         ActionResult validatedDirect = t.validateFinalPallet(tg.position, "OP-01", "2B-TMP-01");
         ok(validatedDirect.ok && t.validatedFinalPallets.contains(tg.position), "directa validada");
         ok(t.isBoxWmsEligible("GRANDEU004"), "directa validada elegible WMS");
-        ok(!t.scanTransfer("GRANDE2U001").ok, "verificar no libera la posición");
+        ok(t.activeFinalPalletForFootPosition.containsKey("I01"), "verificar no libera la posición");
         ok(t.releaseFinalPallet(tg.position).ok, "retiro físico independiente");
-        ScanResult g2 = t.scanTransfer("GRANDE2U001");
+        ScanResult g2 = t.scanTransfer("GRANDE3U001");
         ok(g2.ok && "I01".equals(g2.physicalPosition), "posición liberada se reutiliza");
 
         ScanResult tc = t.scanTransfer("CHICOU001");
@@ -261,7 +263,7 @@ public class EngineSelfTest {
         ok("TR-01".equals(tc.transferPallet), "chico usa traslado activo");
         ok("PENDIENTE_VERIFICAR".equals(t.boxPhysicalState("CHICOU001")), "chico aún no está verificado");
         ok(!t.isBoxWmsEligible("CHICOU001"), "traslado sin distribuir no llega al WMS");
-        ok(t.currentTransferBoxCount() == 1 && t.currentTransferDestinations().size() == 1,
+        ok(t.currentTransferBoxCount() == 2 && t.currentTransferDestinations().size() == 2,
                 "resumen del traslado activo");
         ActionResult sent = t.changeCurrentTransfer();
         ok(sent.ok && t.isTransferClosed("TR-01") && "TR-02".equals(t.currentTransferPallet()), "cambia traslado sin bloqueo");

@@ -1,8 +1,14 @@
-# Ilubox WMS V0.14 — Optimización Global y Replanificación
+# Ilubox WMS V0.15 — Operación Simplificada Q9
 
 Variante local para Windows y PDA AUTOID Q9. Windows convierte el Packing List en un plan global sellado; la PDA valida cada caja individual y ejecuta ese mismo plan sin depender del orden de descarga.
 
 ## Cambios principales
+
+- Conserva el optimizador global de V0.14 y simplifica la ejecución física en la Q9.
+- Si se agotan las posiciones al pie, una caja válida no se rechaza: se marca y viaja en la `TR-xx` hacia una definitiva homogénea de contingencia en el tendido.
+- Durante la descarga se habilitan posiciones adicionales con `+ POSICIÓN IZQ./DER.` sin reiniciar la sesión.
+- La pantalla de escaneo mantiene siempre visibles `TARIMAS` y la única acción contextual necesaria: `CAMBIAR TR`, `NO CABE`, `TEMPORAL WMS` o `POSICIÓN LIBRE`.
+- El resultado para Windows y el reporte de tarimas contienen solo cajas y tarimas realmente escaneadas. El plan teórico queda separado para conciliación.
 
 - Minimiza primero la cantidad de tarimas; después, las divisiones de código y la diversidad por tarima.
 - Restricciones duras: 1.94 m³ objetivo y 1,000 kg por tarima. La meta de 600 kg se aplica solo cuando el volumen y los datos disponibles lo permiten.
@@ -25,8 +31,8 @@ Variante local para Windows y PDA AUTOID Q9. Windows convierte el Packing List e
 6. La PDA exporta `resultado_PDA_<contenedor>.json`.
 7. Windows concilia el resultado y habilita la copia exclusiva de la plantilla oficial XLWMS.
 
-Consulta [las reglas operativas V0.14](docs/V0_14_OPTIMIZACION_GLOBAL.md).
+Consulta [las reglas operativas V0.15](docs/V0_15_OPERACION_SIMPLIFICADA.md).
 
 ## Compatibilidad
 
-El APK usa el paquete independiente `com.ilubox.descargapda.v014`; puede instalarse junto con versiones anteriores. El resultado conserva `ilubox.pda.result.v4`. No se conecta ni ejecuta movimientos dentro de XLWMS.
+El APK usa el paquete independiente `com.ilubox.descargapda.v015`; puede instalarse junto con versiones anteriores. El resultado conserva `ilubox.pda.result.v4`. No se conecta ni ejecuta movimientos dentro de XLWMS.

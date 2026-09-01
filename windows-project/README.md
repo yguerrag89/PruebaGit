@@ -1,4 +1,4 @@
-# Ilubox WMS Windows V0.13 — Manual Asistida Local
+# Ilubox WMS Windows V0.15 — Operación Simplificada Local
 
 Aplicación local para preparar la descarga, generar el JSON de trabajo de la PDA, validar el resultado móvil y llenar una copia de la plantilla oficial `PutawayCrossDockImport`.
 
@@ -14,15 +14,15 @@ Requiere Python 3.10 o posterior. `INSTALAR.bat` instala Streamlit y openpyxl.
 
 1. En **Supervisor**, carga el Packing List XLSX/ZIP/RAR.
 2. Selecciona el contenedor y descarga **archivo para PDA (.json)**.
-3. Importa el JSON en la Q9 y realiza la operación MANUAL ASISTIDA.
-4. En la Q9, valida todas las `T-xxx` con revisión física, responsable y temporal WMS.
+3. Importa el JSON en la Q9 y realiza la operación TRASLADO simplificada o MANUAL ASISTIDA.
+4. En la Q9, valida las `T-xxx` realmente formadas con revisión física, responsable y temporal WMS.
 5. Exporta `resultado_PDA_<contenedor>.json` y cópialo a Windows.
 6. En **Exportación WMS**, importa ese resultado. Windows verifica contenedor, huella del Packing List, `Uxxx`, duplicados, tarimas, temporales y totales.
 7. Captura la orden Putaway. Si faltan cajas, confirma la carga parcial y registra el motivo.
 8. Revisa la vista previa y descarga el XLSX exclusivo de cuatro columnas.
 9. En XLWMS usa primero **Comenzar a analizar** antes de ejecutar la carga.
 
-La aplicación no se conecta al WMS ni confirma movimientos. El reporte operativo y el archivo exclusivo WMS son descargas diferentes.
+La aplicación no se conecta al WMS ni confirma movimientos. El plan teórico, el reporte real y el archivo exclusivo WMS son productos diferentes; una tarima no escaneada nunca se exporta como recibida.
 
 ## Validación estricta
 

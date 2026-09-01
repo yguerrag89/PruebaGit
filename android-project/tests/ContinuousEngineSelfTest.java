@@ -85,7 +85,11 @@ public class ContinuousEngineSelfTest {
         ScanResult first = foot.scanTransfer("GRANDEU005");
         check(first.ok && foot.expectedForPallet(first.position) == 2, "previsión local distinta del total del código");
         check(!foot.isBarcodeInFinal("GRANDEU005"), "directa pendiente de verificación");
-        check(!foot.scanTransfer("OTROU001").ok && foot.acceptedBoxCount() == 1, "sin espacio no cuenta caja");
+        ScanResult overflow = foot.scanTransfer("OTROU001");
+        check(overflow.ok && "CONTINGENCIA TR".equals(overflow.status) && foot.acceptedBoxCount() == 2,
+                "sin espacio acepta la caja en contingencia");
+        check(foot.undoAcceptedBox("OTROU001").ok && foot.acceptedBoxCount() == 1,
+                "la corrección de contingencia restaura el avance");
         check(!foot.closeDirectPalletEarly(first.position, "").ok, "motivo parcial obligatorio");
         check(!foot.validateFinalPallet(first.position, "OP", "2B-TMP-03").ok, "no verifica parcial sin cierre explícito");
         check(foot.closeDirectPalletEarly(first.position, "Falta de espacio al pie").ok, "cierre parcial");
@@ -95,7 +99,8 @@ public class ContinuousEngineSelfTest {
         check(!foot.releaseFinalPallet(first.position).ok, "no libera tarima sin verificar");
         check(foot.validateFinalPallet(first.position, "OP", "2B-TMP-03").ok, "verifica parcial");
         check(foot.activeFinalPalletForFootPosition.size() == 1 && !foot.isPalletRetired(first.position), "verificar no libera espacio");
-        check(!foot.scanTransfer("OTROU001").ok, "posición continúa ocupada");
+        check(foot.activeFinalPalletForFootPosition.containsKey("I01"), "posición continúa ocupada");
+        export(output, "v4-partial.json", foot);
         check(foot.releaseFinalPallet(first.position).ok && foot.activeFinalPalletForFootPosition.isEmpty(), "libera al confirmar retiro");
         ScanResult next = foot.scanTransfer("GRANDEU001");
         check(next.ok && !next.position.equals(first.position) && next.physicalPosition.equals(first.physicalPosition), "nuevo ID, misma posición");
@@ -105,7 +110,6 @@ public class ContinuousEngineSelfTest {
         check(!foot.scanTransfer("GRANDEU000").ok && !foot.scanTransfer("GRANDEU006").ok
                 && !foot.scanTransfer("GRANDE").ok && foot.acceptedBoxCount() == 2, "identidad estricta sin efectos laterales");
         check(foot.undoAcceptedBox("GRANDEU001").ok && foot.activeFinalPalletForFootPosition.isEmpty(), "anular única caja no reserva un espacio fantasma");
-        export(output, "v4-partial.json", foot);
         check(copy(foot).originalExpectedForPallet(first.position) == 2, "persiste cierre parcial");
 
         UnloadEngine composition = new UnloadEngine("DESGLOSE", Arrays.asList(

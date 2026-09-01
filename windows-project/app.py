@@ -28,7 +28,7 @@ APP_DIR = Path(__file__).resolve().parent
 OFFICIAL_TEMPLATE = APP_DIR / "assets" / "templates" / "Plantilla_oficial_WMS_PutawayCrossDockImport.xlsx"
 
 
-st.set_page_config(page_title="Ilubox WMS Windows V0.14", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Ilubox WMS Windows V0.15", page_icon="📦", layout="wide")
 
 st.markdown(
     """
@@ -403,7 +403,7 @@ if mode == "👷 Operador":
 # MODO SUPERVISOR
 # ==========================
 else:
-    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.14 Optimización Global")
+    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.15 Operación Simplificada")
     st.caption(
         "La aplicación organiza la descarga, conserva el avance localmente y prepara una copia validada "
         "de la plantilla oficial. No se conecta ni ejecuta movimientos dentro del WMS."
@@ -679,7 +679,7 @@ else:
         pda_result = st.session_state.pda_results.get(result_key)
         source_events = []
         source_received = 0
-        source_label = "Resultado PDA V0.14 pendiente"
+        source_label = "Resultado PDA V0.15 pendiente"
         if pda_result and pda_result.ready:
             src1, src2 = st.columns([3, 1])
             src1.success(
@@ -704,7 +704,7 @@ else:
                 render_pda_pallets(pda_result, "supervisor_pda")
         else:
             st.warning(
-                "Importa un resultado PDA V0.14 (también se admiten versiones anteriores bajo sus reglas). El escaneo local de Windows permanece disponible para pruebas "
+                "Importa un resultado PDA V0.15 (también se admiten versiones anteriores bajo sus reglas). El escaneo local de Windows permanece disponible para pruebas "
                 "y auditoría, pero no sustituye la verificación física de cada tarima."
             )
 

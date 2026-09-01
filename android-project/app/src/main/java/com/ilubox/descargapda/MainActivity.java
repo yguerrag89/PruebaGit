@@ -22,7 +22,6 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
@@ -407,7 +406,7 @@ public class MainActivity extends ComponentActivity {
         title.setSingleLine(true);
         r.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(60, 38)));
 
-        TextView sub = tv("V0.14 · optimización global + NO CABE", rsp(18, 13), C_GRAY, true);
+        TextView sub = tv("V0.15 · operación simple + evidencia real", rsp(18, 13), C_GRAY, true);
         sub.setGravity(Gravity.CENTER);
         r.addView(sub, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(34, 24)));
         r.addView(spacer(compactPda() ? 8 : 24));
@@ -781,19 +780,10 @@ public class MainActivity extends ComponentActivity {
         header.setBackground(box(C_DARK, C_DARK, 10));
         header.addView(tv(engine.containerId, rsp(20, 16), Color.WHITE, true),
                 new LinearLayout.LayoutParams(0, rh(48, 38), 1f));
-        Button supervisor = button("SUPERVISOR", Color.WHITE, C_DARK);
-        supervisor.setOnClickListener(v -> showSupervisor());
-        header.addView(supervisor, new LinearLayout.LayoutParams(dp(102), rh(42, 36)));
+        Button control = button(pallets ? "ESCANEAR" : "CONTROL", Color.WHITE, C_DARK);
+        control.setOnClickListener(v -> { if (pallets) showContinuousOperator(); else showSimpleTransferSupervisor(); });
+        header.addView(control, new LinearLayout.LayoutParams(dp(102), rh(42, 36)));
         screen.addView(header);
-        LinearLayout tabs = new LinearLayout(this);
-        Button scan = button("ESCANEAR", pallets ? Color.WHITE : C_BLUE, pallets ? C_BLUE : Color.WHITE);
-        Button list = button("TARIMAS", pallets ? C_BLUE : Color.WHITE, pallets ? Color.WHITE : C_BLUE);
-        scan.setOnClickListener(v -> showContinuousOperator());
-        list.setOnClickListener(v -> showOperatorPallets());
-        tabs.addView(scan, new LinearLayout.LayoutParams(0, rh(44, 38), 1f));
-        tabs.addView(list, new LinearLayout.LayoutParams(0, rh(44, 38), 1f));
-        screen.addView(spacer(4));
-        screen.addView(tabs);
         addSyncBar(screen);
         progressText = tv("", rsp(18, 15), C_DARK, true);
         progressText.setGravity(Gravity.CENTER);
@@ -865,21 +855,21 @@ public class MainActivity extends ComponentActivity {
         pressureText.setGravity(Gravity.CENTER);
         pressureText.setPadding(0, dp(6), 0, dp(6));
         content.addView(pressureText);
-        changeTransferButton = button("CAMBIAR TRASLADO", C_BLUE, Color.WHITE);
-        changeTransferButton.setOnClickListener(v -> changeTransfer());
-        content.addView(changeTransferButton, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(52, 44)));
-        TextView tripHint = tv("Pulse al sustituir físicamente la TR. No detiene los siguientes escaneos.", rsp(12, 10), C_GRAY, false);
-        tripHint.setPadding(dp(3), dp(3), dp(3), dp(5));
-        content.addView(tripHint);
         pendingReadyBox = new LinearLayout(this);
         pendingReadyBox.setOrientation(LinearLayout.VERTICAL);
         content.addView(pendingReadyBox);
-        Button trips = button("VER TRASLADOS Y DESTINOS", Color.WHITE, C_BLUE);
-        trips.setOnClickListener(v -> showTransferList());
-        content.addView(trips, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(44, 38)));
         recentText = tv("", rsp(12, 10), C_GRAY, false);
         recentText.setPadding(dp(4), dp(8), dp(4), dp(8));
         content.addView(recentText);
+        LinearLayout fixedActions = new LinearLayout(this);
+        fixedActions.setPadding(0, dp(4), 0, 0);
+        Button pallets = button("TARIMAS", Color.WHITE, C_BLUE);
+        pallets.setOnClickListener(v -> showOperatorPallets());
+        changeTransferButton = button("CAMBIAR TR", C_BLUE, Color.WHITE);
+        changeTransferButton.setOnClickListener(v -> performContextAction());
+        fixedActions.addView(pallets, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
+        fixedActions.addView(changeTransferButton, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
+        screen.addView(fixedActions);
         setContentView(screen);
         refreshOperator();
         focusScanner();
@@ -1282,10 +1272,41 @@ public class MainActivity extends ComponentActivity {
         }
         refreshPendingReady();
         if (changeTransferButton != null && engine.isTransferMode()) {
-            changeTransferButton.setEnabled(!storageBlocked && !db.isServerSealed() && engine.currentTransferBoxCount() > 0);
+            refreshContextAction();
         }
         refreshMap();
         refreshRecent();
+    }
+
+    private void refreshContextAction() {
+        if (changeTransferButton == null || engine == null) return;
+        String pallet = lastPosition;
+        boolean hasPallet = engine.palletScannedCount(pallet) > 0;
+        boolean mustChangeTransfer = hasPallet && !engine.isFootPallet(pallet) && engine.currentTransferBoxCount() > 0;
+        if (hasPallet && !mustChangeTransfer) {
+            if (engine.isFinalPalletValidated(pallet) && !engine.isPalletRetired(pallet)) {
+                changeTransferButton.setText(engine.isFootPallet(pallet) ? "POSICIÓN LIBRE" : "TARIMA RETIRADA");
+            } else if (engine.isPalletReadyForVerification(pallet)) {
+                changeTransferButton.setText("TEMPORAL WMS");
+            } else {
+                changeTransferButton.setText("NO CABE");
+            }
+            changeTransferButton.setEnabled(!storageBlocked && !db.isServerSealed());
+        } else {
+            changeTransferButton.setText("CAMBIAR TR");
+            changeTransferButton.setEnabled(!storageBlocked && !db.isServerSealed() && engine.currentTransferBoxCount() > 0);
+        }
+    }
+
+    private void performContextAction() {
+        String pallet = lastPosition;
+        boolean hasPallet = engine.palletScannedCount(pallet) > 0;
+        boolean mustChangeTransfer = hasPallet && !engine.isFootPallet(pallet) && engine.currentTransferBoxCount() > 0;
+        if (hasPallet && !mustChangeTransfer) {
+            if (engine.isFinalPalletValidated(pallet) && !engine.isPalletRetired(pallet)) showReleasePallet(pallet);
+            else if (engine.isPalletReadyForVerification(pallet)) showVerifyPallet(pallet);
+            else showPartialClosure(pallet);
+        } else changeTransfer();
     }
 
     private void refreshPendingReady() {
@@ -1818,7 +1839,7 @@ public class MainActivity extends ComponentActivity {
         refreshMap();
     }
 
-    /** V0.10: consulta compartida y herramientas administrativas separadas de la operación. */
+    /** V0.15: tablero operativo compacto; los controles críticos permanecen fuera del desplazamiento. */
     private void showSimpleTransferSupervisor() {
         if (engine == null) { showHome(); return; }
         inSupervisor = true;
@@ -1831,12 +1852,21 @@ public class MainActivity extends ComponentActivity {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = tv("SUPERVISOR", rsp(23, 18), C_DARK, true);
+        TextView title = tv("CONTROL OPERATIVO", rsp(21, 17), C_DARK, true);
         header.addView(title, new LinearLayout.LayoutParams(0, rh(50, 42), 1f));
         Button op = button("OPERADOR", C_BLUE, Color.WHITE);
         op.setOnClickListener(v -> showOperator());
         header.addView(op, new LinearLayout.LayoutParams(dp(102), rh(44, 36)));
         screen.addView(header);
+
+        LinearLayout positions = new LinearLayout(this);
+        Button addLeft = button("+ POSICIÓN IZQ.", C_GREEN, Color.WHITE);
+        Button addRight = button("+ POSICIÓN DER.", C_GREEN, Color.WHITE);
+        addLeft.setOnClickListener(v -> enablePositionDuringOperation("I"));
+        addRight.setOnClickListener(v -> enablePositionDuringOperation("D"));
+        positions.addView(addLeft, new LinearLayout.LayoutParams(0, rh(52, 44), 1f));
+        positions.addView(addRight, new LinearLayout.LayoutParams(0, rh(52, 44), 1f));
+        screen.addView(positions);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -1873,7 +1903,7 @@ public class MainActivity extends ComponentActivity {
         r.addView(plan);
         r.addView(spacer(10));
 
-        Button filter = button(showAllPallets ? "MOSTRAR SOLO ACTIVAS" : "VER TODAS / HISTORIAL", Color.WHITE, C_BLUE);
+        Button filter = button(showAllPallets ? "SOLO ACTIVAS" : "INCLUIR RETIRADAS", Color.WHITE, C_BLUE);
         filter.setOnClickListener(v -> { showAllPallets = !showAllPallets; showSimpleTransferSupervisor(); });
         r.addView(filter, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(44, 38)));
         addFinalPalletSection(r, "AL PIE DEL CONTENEDOR", true, views);
@@ -1899,23 +1929,30 @@ public class MainActivity extends ComponentActivity {
         r.addView(transfer);
         r.addView(spacer(10));
 
-        Button exportWindows = button("EXPORTAR RESULTADO PARA WINDOWS", C_GREEN, Color.WHITE);
-        exportWindows.setOnClickListener(v -> exportPdaResult());
-        r.addView(exportWindows, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(50, 42)));
-        r.addView(spacer(8));
-
-        Button tools = button("REPORTES Y CORRECCIONES", Color.WHITE, C_DARK);
-        tools.setBackground(box(Color.WHITE, C_BORDER, 9));
-        tools.setOnClickListener(v -> showSimpleSupervisorTools());
-        r.addView(tools, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(48, 40)));
-        r.addView(spacer(8));
-
-        Button newUnload = button("NUEVA DESCARGA / CARGAR LISTA", Color.WHITE, C_RED);
-        newUnload.setBackground(box(Color.WHITE, C_RED, 9));
-        newUnload.setOnClickListener(v -> confirmNewUnloadImport());
-        r.addView(newUnload, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(48, 40)));
         r.addView(spacer(12));
+
+        LinearLayout fixedActions = new LinearLayout(this);
+        Button scan = button("ESCANEAR", C_BLUE, Color.WHITE);
+        scan.setOnClickListener(v -> showContinuousOperator());
+        Button more = button("MÁS", Color.WHITE, C_DARK);
+        more.setBackground(box(Color.WHITE, C_BORDER, 9));
+        more.setOnClickListener(v -> showSimpleSupervisorTools());
+        fixedActions.addView(scan, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
+        fixedActions.addView(more, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
+        screen.addView(fixedActions);
         setContentView(screen);
+    }
+
+    private void enablePositionDuringOperation(String side) {
+        String position = engine.enableNext(side);
+        if (position == null) {
+            Toast.makeText(this, "Ya están habilitadas las 10 posiciones de ese lado", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        db.insertSystemEvent("POSICIÓN HABILITADA", position, position + " habilitada durante la operación");
+        saveQuietly();
+        Toast.makeText(this, position + " lista para utilizar", Toast.LENGTH_SHORT).show();
+        showSimpleTransferSupervisor();
     }
 
     private View simpleMetric(String label, String value, int accent) {
@@ -1945,7 +1982,7 @@ public class MainActivity extends ComponentActivity {
         parent.addView(heading, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(28, 23)));
         int shown = 0;
         for (UnloadEngine.FinalPalletView v : views) {
-            if (v.direct != direct || (!showAllPallets && (v.scanned <= 0 || v.retired))) continue;
+            if (v.direct != direct || v.scanned <= 0 || (!showAllPallets && v.retired)) continue;
             shown++;
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.VERTICAL);
@@ -1976,7 +2013,7 @@ public class MainActivity extends ComponentActivity {
             parent.addView(row, rp);
         }
         if (shown == 0) {
-            TextView empty = tv("Sin tarimas activas · consulte Todas para ver el plan", rsp(13, 10), C_GRAY, false);
+            TextView empty = tv("Sin tarimas reales registradas", rsp(13, 10), C_GRAY, false);
             empty.setPadding(dp(8), dp(5), dp(8), dp(5));
             parent.addView(empty);
         }
@@ -2075,21 +2112,17 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void showPartialClosure(String pallet) {
-        String[] reasons = {"Las cajas ya no caben físicamente", "Dimensiones o forma no previstas", "Peso o estabilidad insegura"};
-        showOperationDialog(new AlertDialog.Builder(this).setTitle("Motivo de cierre · " + pallet)
-                .setItems(reasons, (d, selected) -> {
-                    String reason = reasons[selected];
-                    boolean direct = engine.directCodeForPallet.containsKey(pallet);
-                    showOperationDialog(new AlertDialog.Builder(this).setTitle("Cerrar por NO CABE · " + pallet)
-                            .setMessage(engine.palletScannedCount(pallet) + " de " + engine.expectedForPallet(pallet)
-                                    + " cajas previstas. " + (direct
-                                    ? "Las restantes seguirán pendientes y abrirán otra directa."
-                                    : "La app congelará las cajas que ya salieron en una TR cerrada y replanificará solo lo pendiente. Las cajas de la TR activa que cambien de destino deberán remarcarse.")
-                                    + "\n\nDespués deberá verificar el contenido y capturar la temporal WMS.\nMotivo: " + reason)
-                            .setNegativeButton("Cancelar", null)
-                            .setPositiveButton("CONFIRMAR NO CABE", (x, y) -> commitOperation("TARIMA PARCIAL CERRADA",
-                                    () -> engine.closeFinalPalletEarly(pallet, reason))).create());
-                }).setNegativeButton("Cancelar", null).create());
+        final String reason = "Las cajas ya no caben físicamente";
+        boolean direct = engine.isFootPallet(pallet);
+        showOperationDialog(new AlertDialog.Builder(this).setTitle("NO CABE · " + pallet)
+                .setMessage(engine.palletScannedCount(pallet) + " de " + engine.expectedForPallet(pallet)
+                        + " cajas previstas. " + (direct
+                        ? "Las restantes quedarán pendientes y abrirán otra definitiva."
+                        : "La aplicación conservará lo ya escaneado y recalculará únicamente lo pendiente.")
+                        + "\n\nDespués deberá escanear la temporal WMS para cerrar esta tarima.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("CERRAR TARIMA", (x, y) -> commitOperation("TARIMA PARCIAL CERRADA",
+                        () -> engine.closeFinalPalletEarly(pallet, reason))).create());
     }
 
     private void showVerifyPallet(String pallet) {
@@ -2101,9 +2134,6 @@ public class MainActivity extends ComponentActivity {
         temporary.setHint("Escanee o escriba TEMPORAL WMS (obligatoria)");
         temporary.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         temporary.setImeOptions(EditorInfo.IME_ACTION_DONE);
-        // El Enter del lector termina el dato; nunca confirma por sí solo el cierre.
-        temporary.setOnKeyListener((v, keyCode, event) -> keyCode == KeyEvent.KEYCODE_ENTER);
-        temporary.setOnEditorActionListener((v, actionId, event) -> true);
         fields.addView(temporary);
         TextView destination = tv(pallet + " · falta temporal", rsp(18, 15), C_BLUE, true);
         fields.addView(destination);
@@ -2119,22 +2149,17 @@ public class MainActivity extends ComponentActivity {
         responsible.setHint("Nombre o iniciales del responsable");
         responsible.setText(getPreferences(MODE_PRIVATE).getString("last_verifier", ""));
         fields.addView(responsible);
-        CheckBox checked = new CheckBox(this);
-        checked.setText("Revisé las cajas y la temporal corresponde a su ubicación y bodega");
-        fields.addView(checked);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(fields);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Validar y cerrar " + pallet)
-                .setMessage(engine.palletScannedCount(pallet) + " cajas registradas. Revise el desglose y la etiqueta de la temporal."
-                        + "\nSe guarda en esta tarima, no se envía al WMS ni libera la posición. Solo se valida el formato; no su existencia en WMS.")
+                .setMessage(engine.palletScannedCount(pallet) + " cajas registradas. Escanee la temporal WMS."
+                        + "\nLa lectura con Enter cerrará la tarima si el formato y el responsable son válidos; no la ubicará todavía en el WMS.")
                 .setView(scroll).setNegativeButton("Cancelar", null).setPositiveButton("VALIDAR Y CERRAR", null).create();
         dialog.setOnShowListener(d -> {
             if (dialog.getWindow() != null) dialog.getWindow().setSoftInputMode(
                     WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
             temporary.requestFocus();
             Button confirm = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-            confirm.setEnabled(false);
-            checked.setOnCheckedChangeListener((b, value) -> confirm.setEnabled(value));
             confirm.setOnClickListener(v -> {
                 String location = temporary.getText().toString();
                 String error = WmsTemporaryLocation.error(location);
@@ -2145,6 +2170,15 @@ public class MainActivity extends ComponentActivity {
                     getPreferences(MODE_PRIVATE).edit().putString("last_verifier", actor).apply();
                     dialog.dismiss();
                 }
+            });
+            temporary.setOnKeyListener((v, keyCode, event) -> {
+                if (keyCode == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN
+                        && event.getRepeatCount() == 0) confirm.performClick();
+                return keyCode == KeyEvent.KEYCODE_ENTER;
+            });
+            temporary.setOnEditorActionListener((v, actionId, event) -> {
+                if (actionId == EditorInfo.IME_ACTION_DONE && event == null) confirm.performClick();
+                return true;
             });
         });
         showOperationDialog(dialog);
@@ -2234,11 +2268,14 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void showSimpleSupervisorTools() {
-        String[] options = new String[]{"Exportar historial CSV", "Reporte Excel", "Corregir último escaneo"};
+        String[] options = new String[]{"Exportar resultado para Windows", "Exportar historial CSV",
+                "Reporte Excel real", "Corregir último escaneo", "Nueva descarga / cargar lista"};
         new AlertDialog.Builder(this).setTitle("Reportes y correcciones").setItems(options, (d, which) -> {
-            if (which == 0) exportCsv();
-            else if (which == 1) exportExcelReport();
-            else showUndoLastScanDialog();
+            if (which == 0) exportPdaResult();
+            else if (which == 1) exportCsv();
+            else if (which == 2) exportExcelReport();
+            else if (which == 3) showUndoLastScanDialog();
+            else confirmNewUnloadImport();
         }).setNegativeButton("Cerrar", null).show();
     }
 

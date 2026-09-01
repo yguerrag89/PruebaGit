@@ -590,6 +590,8 @@ public class PilotDatabase extends SQLiteOpenHelper {
         summary.add("Tendido final inicial", engine.plannedTendidoPalletCount());
         summary.add("Definitivas iniciales al pie", engine.initialDirectFootPalletCount());
         summary.add("Traslados iniciales", 1);
+        summary.add("Política de exportación", "SOLO CAJAS REALES ESCANEADAS");
+        summary.add("Cajas de contingencia por falta de posición", engine.overflowTransferBoxCount());
         summary.add("Intentos rechazados", rejectedAttempts);
         summary.add("Incidencias únicas", uniqueIncidents.size());
         for (Map.Entry<String,Integer> x : incidence.entrySet()) summary.add("Intentos · " + x.getKey(), x.getValue());
@@ -600,12 +602,15 @@ public class PilotDatabase extends SQLiteOpenHelper {
                 "Verificadas físicamente", "Previstas", "Códigos registrados", "Verificada", "Elegibles WMS",
                 "Códigos previstos", "Previsión original", "Motivo cierre parcial", "Retirada", "Verificado por", "Fecha verificación", "Método verificación", "Temporal WMS");
         for (UnloadEngine.FinalPalletView pallet : engine.finalPalletViews()) {
+            if (pallet.scanned <= 0 && !pallet.validated && !pallet.retired) continue;
             int eligible = 0;
             for (Map.Entry<String,String> entry : engine.finalPalletForBarcode.entrySet()) {
                 if (pallet.label.equals(entry.getValue()) && engine.isBoxWmsEligible(entry.getKey())) eligible++;
             }
             UnloadEngine.PalletVerification proof = engine.verificationForPallet(pallet.label);
-            pallets.add(pallet.label, pallet.direct ? "PIE" : "TENDIDO", pallet.physicalPosition,
+            String formation = engine.isFootPallet(pallet.label) ? "PIE"
+                    : (engine.isOverflowTendidoPallet(pallet.label) ? "TENDIDO · CONTINGENCIA" : "TENDIDO");
+            pallets.add(pallet.label, formation, pallet.physicalPosition,
                     pallet.status, pallet.scanned, pallet.received, pallet.expected, pallet.codeCount,
                     pallet.validated ? 1 : 0, eligible, pallet.plannedCodeCount, pallet.originalExpected,
                     pallet.closureReason, pallet.retired ? 1 : 0, proof == null ? "" : proof.responsible,
@@ -627,7 +632,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
             String barcode = entry.getKey();
             EventRow event = entry.getValue();
             String pallet = safe(engine.finalPalletForBarcode.get(barcode));
-            boolean direct = engine.directFinalCodes.contains(safe(event.code).toUpperCase(Locale.ROOT));
+            boolean direct = engine.isFootPallet(pallet);
             detail.add(event.time, barcode, event.code, event.boxNumber, pallet, direct ? "PIE" : "TENDIDO",
                     engine.physicalPositionForPallet(pallet), safe(engine.transferForBarcode.get(barcode)),
                     engine.boxPhysicalState(barcode), engine.validatedFinalPallets.contains(pallet) ? 1 : 0,

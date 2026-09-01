@@ -51,6 +51,12 @@ def build_pda_manifest(container, settings) -> bytes:
         "record_signature": record_signature(records_by_code),
         "strict_individual_barcodes": True,
         "individual_sequence": {"prefix": "U", "start": 1, "consecutive": True, "padding": 3},
+        "operation_policy": {
+            "profile": "SIMPLE_Q9_V015",
+            "overflow": "TRANSFER_WHEN_NO_FOOT_POSITION",
+            "result_export": "ACTUAL_SCANNED_ONLY",
+            "transfer_confirmation": "PHYSICAL_TR_CHANGE_ONLY",
+        },
         "settings": {
             "physical_capacity": settings.physical_capacity,
             "target_capacity": settings.target_capacity,
@@ -357,6 +363,11 @@ def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImp
         result.errors.append("El resultado no declara el modelo de verificación requerido.")
     if requires_temporary and payload.get("wms_location_validation") != "FORMAT_ONLY":
         result.errors.append("La PDA debe indicar que solo comprobó el formato, no la existencia de la temporal en WMS.")
+    is_v015 = str(payload.get("engine_version", "")).startswith("0.15-")
+    if is_v015 and payload.get("plan_export_policy") != "ACTUAL_SCANNED_ONLY":
+        result.errors.append("V0.15 debe exportar únicamente tarimas y cajas realmente escaneadas.")
+    if is_v015 and payload.get("overflow_policy") != "TRANSFER_WHEN_NO_FOOT_POSITION":
+        result.errors.append("V0.15 no declara la contingencia segura cuando se agotan posiciones al pie.")
 
     def count(value: object) -> bool:
         return type(value) is int and value >= 0
@@ -383,6 +394,8 @@ def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImp
         original = pallet["original_expected"]
         verified = pallet["validated"]
         retired = pallet["retired"]
+        if is_v015 and scanned == 0:
+            result.errors.append(prefix + "V0.15 no permite exportar una tarima teórica sin cajas escaneadas.")
         if requires_temporary:
             temporary = pallet.get("wms_temporary_location")
             if not isinstance(temporary, str) or (verified and not valid_wms_temporary(temporary)) or (not verified and temporary):
@@ -419,8 +432,8 @@ def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImp
         reason = pallet.get("closure_reason")
         if not clean_text(reason, 160):
             result.errors.append(prefix + "motivo de cierre inválido.")
-        elif original > expected and (not reason.strip() or formation != "PIE"):
-            result.errors.append(prefix + "la reducción del objetivo requiere cierre parcial directo y motivo.")
+        elif original > expected and (not reason.strip() or (formation != "PIE" and not is_v015)):
+            result.errors.append(prefix + "la reducción del objetivo requiere cierre parcial trazable y motivo.")
         elif reason and original == expected:
             result.errors.append(prefix + "el cierre parcial no conserva la previsión original.")
 

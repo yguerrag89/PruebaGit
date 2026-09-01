@@ -1,8 +1,8 @@
-name: Build Ilubox WMS V0.14 Optimización Global
+name: Build Ilubox WMS V0.15 Operación Simplificada
 
 on:
   push:
-    branches: [ v0-14-optimizacion-global-replanificacion ]
+    branches: [ v0-15-operacion-simplificada-q9 ]
   workflow_dispatch:
 
 permissions:
@@ -29,6 +29,7 @@ jobs:
           python -B test_temporary_exchange.py
           python -B test_manual_assisted_exchange.py
           python -B test_global_optimizer.py
+          python -B test_v015_result_policy.py
           python -B test_streamlit_app.py
 
       - uses: actions/setup-java@v4
@@ -48,14 +49,15 @@ jobs:
 
       - name: Validate Android engine and native exchange
         run: |
-          mkdir -p test-bin test-output/v014
-          javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java android-project/tests/ContinuousEngineSelfTest.java android-project/tests/TemporaryLocationSelfTest.java android-project/tests/V014EngineSelfTest.java
-          java -cp test-bin EngineSelfTest test-output/v014/manual-v4.json
-          java -cp test-bin ContinuousEngineSelfTest android-project/tests/fixtures/v09-state.ser test-output/v014
-          java -cp test-bin TemporaryLocationSelfTest android-project/tests/fixtures/v010-state.ser test-output/v014
+          mkdir -p test-bin test-output/v015
+          javac -d test-bin android-project/app/src/main/java/com/ilubox/descargapda/core/*.java android-project/tests/EngineSelfTest.java android-project/tests/ContinuousEngineSelfTest.java android-project/tests/TemporaryLocationSelfTest.java android-project/tests/V014EngineSelfTest.java android-project/tests/V015EngineSelfTest.java
+          java -cp test-bin EngineSelfTest test-output/v015/manual-v4.json
+          java -cp test-bin ContinuousEngineSelfTest android-project/tests/fixtures/v09-state.ser test-output/v015
+          java -cp test-bin TemporaryLocationSelfTest android-project/tests/fixtures/v010-state.ser test-output/v015
           java -cp test-bin V014EngineSelfTest
-          (cd windows-project && python -B test_temporary_exchange.py ../test-output/v014)
-          (cd windows-project && python -B test_manual_assisted_exchange.py ../test-output/v014/manual-v4.json)
+          java -cp test-bin V015EngineSelfTest
+          (cd windows-project && python -B test_temporary_exchange.py ../test-output/v015)
+          (cd windows-project && python -B test_manual_assisted_exchange.py ../test-output/v015/manual-v4.json)
 
       - name: Build PDA APK
         working-directory: android-project
@@ -64,7 +66,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Ilubox-v0.14-validacion-Android
+          name: Ilubox-v0.15-validacion-Android
           path: |
             android-project/app/build/reports/lint-results-debug.*
             android-project/app/build/test-results/
@@ -72,16 +74,16 @@ jobs:
 
       - name: Package local deliverables
         run: |
-          mkdir -p release/v0.14
-          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/v0.14/Ilubox_WMS_PDA_v0.14_Global_Q9.apk
-          python scripts/package_v014.py
-          unzip -t release/v0.14/Ilubox_WMS_PDA_v0.14_Global_Q9.apk
-          unzip -t release/v0.14/Ilubox_WMS_Windows_v0.14_Optimizacion_Global.zip
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose release/v0.14/Ilubox_WMS_PDA_v0.14_Global_Q9.apk
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/v0.14/Ilubox_WMS_PDA_v0.14_Global_Q9.apk
-          (cd release/v0.14 && sha256sum Ilubox_WMS_PDA_v0.14_Global_Q9.apk Ilubox_WMS_Windows_v0.14_Optimizacion_Global.zip > SHA256SUMS.txt)
+          mkdir -p release/v0.15
+          cp android-project/app/build/outputs/apk/debug/app-debug.apk release/v0.15/Ilubox_WMS_PDA_v0.15_Simple_Q9.apk
+          python scripts/package_v015.py
+          unzip -t release/v0.15/Ilubox_WMS_PDA_v0.15_Simple_Q9.apk
+          unzip -t release/v0.15/Ilubox_WMS_Windows_v0.15_Operacion_Simplificada.zip
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose release/v0.15/Ilubox_WMS_PDA_v0.15_Simple_Q9.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/v0.15/Ilubox_WMS_PDA_v0.15_Simple_Q9.apk
+          (cd release/v0.15 && sha256sum Ilubox_WMS_PDA_v0.15_Simple_Q9.apk Ilubox_WMS_Windows_v0.15_Operacion_Simplificada.zip > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Ilubox-WMS-v0.14-Optimizacion-Global
-          path: release/v0.14/
+          name: Ilubox-WMS-v0.15-Operacion-Simplificada
+          path: release/v0.15/

@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 public class UnloadEngine implements Serializable {
     private static final long serialVersionUID = 3L;
     public static final int MAX_PER_SIDE = 10;
-    public static final String ENGINE_VERSION = "0.14-optimizacion-global-replanificacion";
+    public static final String ENGINE_VERSION = "0.15-operacion-simplificada-q9";
 
     public static class FinalPalletView implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -95,7 +95,7 @@ public class UnloadEngine implements Serializable {
             if (scannedUniqueBarcodes.containsKey(barcode)) row.scanned++;
         }
         ArrayList<PalletCodeView> out = new ArrayList<>(rows.values());
-        if (directCodeForPallet.containsKey(pallet)) {
+        if (directExpectedForPallet.containsKey(pallet)) {
             for (PalletCodeView row : out) row.expected = expectedForPallet(pallet);
         }
         Collections.sort(out, (a, b) -> a.code.compareTo(b.code));
@@ -200,8 +200,12 @@ public class UnloadEngine implements Serializable {
     private LinkedHashMap<String, String> rackSuggestionForPallet = new LinkedHashMap<>();
     /** Cajas ya leídas en la TR activa cuyo número T cambió tras un NO CABE. */
     private HashSet<String> remarkRequiredBarcodes = new HashSet<>();
-    private String transferPlanStrategy = "LOCAL_GLOBAL_BFD_V014";
-    private int operationModelVersion = 14;
+    /** Código directo que, por falta de posición al pie, está formando una T homogénea mediante TR. */
+    private LinkedHashMap<String, String> activeOverflowPalletForCode = new LinkedHashMap<>();
+    /** Definitivas homogéneas creadas como contingencia en el tendido; nunca se confunden con PIE. */
+    private HashSet<String> overflowTendidoPallets = new HashSet<>();
+    private String transferPlanStrategy = "LOCAL_GLOBAL_BFD_V015";
+    private int operationModelVersion = 15;
 
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
@@ -216,6 +220,8 @@ public class UnloadEngine implements Serializable {
         if (exceptionalPairCodes == null) exceptionalPairCodes = new HashSet<>();
         if (rackSuggestionForPallet == null) rackSuggestionForPallet = new LinkedHashMap<>();
         if (remarkRequiredBarcodes == null) remarkRequiredBarcodes = new HashSet<>();
+        if (activeOverflowPalletForCode == null) activeOverflowPalletForCode = new LinkedHashMap<>();
+        if (overflowTendidoPallets == null) overflowTendidoPallets = new HashSet<>();
         if (transferPlanStrategy == null) transferPlanStrategy = "MIGRADO";
         if (settings.maxWeight <= 0) settings.maxWeight = 1000.0;
         if (settings.desirableMinWeight <= 0) settings.desirableMinWeight = 600.0;
@@ -234,7 +240,7 @@ public class UnloadEngine implements Serializable {
                 startNextTransferPallet();
             }
         }
-        operationModelVersion = 14;
+        operationModelVersion = 15;
         if (isTransferMode()) refreshTendidoReadiness();
     }
 
@@ -419,8 +425,11 @@ public class UnloadEngine implements Serializable {
         }
         ArrayList<FinalPalletView> out = new ArrayList<>();
         for (FinalPalletView v : views.values()) {
-            if (v.direct) v.expected = directExpectedForPallet.containsKey(v.label)
-                    ? directExpectedForPallet.get(v.label) : Math.max(1, v.scanned);
+            if (directExpectedForPallet.containsKey(v.label)) {
+                v.expected = directExpectedForPallet.get(v.label);
+            } else if (v.direct) {
+                v.expected = Math.max(1, v.scanned);
+            }
             v.plannedCodeCount = codes.get(v.label).size();
             HashSet<String> actualCodes = new HashSet<>();
             for (Map.Entry<String, ScanMeta> entry : scannedUniqueBarcodes.entrySet()) {
@@ -517,7 +526,7 @@ public class UnloadEngine implements Serializable {
             for (String barcode : bin.barcodes) finalPalletForBarcode.put(barcode, bin.label);
         }
         nextFinalPalletSeq = bins.size() + 1;
-        transferPlanStrategy = "LOCAL_GLOBAL_BFD_V014";
+        transferPlanStrategy = "LOCAL_GLOBAL_BFD_V015";
     }
 
     private void packTransferItems(List<TransferPlanItem> items, ArrayList<TransferPlanBin> allBins, boolean unitary) {
@@ -620,6 +629,23 @@ public class UnloadEngine implements Serializable {
     }
 
     public String transferPlanStrategy() { return transferPlanStrategy; }
+
+    public boolean isOverflowTendidoPallet(String pallet) {
+        return pallet != null && overflowTendidoPallets.contains(pallet);
+    }
+
+    public boolean isFootPallet(String pallet) {
+        return pallet != null && (directCodeForPallet.containsKey(pallet) || isManualFinalPallet(pallet));
+    }
+
+    public int overflowTransferBoxCount() {
+        int count = 0;
+        for (String barcode : scannedUniqueBarcodes.keySet()) {
+            String pallet = finalPalletForBarcode.get(barcode);
+            if (pallet != null && overflowTendidoPallets.contains(pallet)) count++;
+        }
+        return count;
+    }
 
     public int exceptionalPairCodeCount() { return exceptionalPairCodes.size(); }
 
@@ -729,6 +755,7 @@ public class UnloadEngine implements Serializable {
      * lo pendiente. Las cajas de la TR activa que cambien de T deben remarcarse. */
     public ActionResult closeFinalPalletEarly(String pallet, String reason) {
         if (directCodeForPallet.containsKey(pallet)) return closeDirectPalletEarly(pallet, reason);
+        if (overflowTendidoPallets.contains(pallet)) return closeOverflowPalletEarly(pallet, reason);
         if (!plannedTendidoPallets.contains(pallet))
             return new ActionResult(false, pallet, "La tarima no pertenece al tendido planificado", false);
         if (validatedFinalPallets.contains(pallet) || isPalletRetired(pallet))
@@ -801,6 +828,35 @@ public class UnloadEngine implements Serializable {
                 + " cajas físicas; " + movable.size() + " pendientes replanificadas en " + touched.size()
                 + " destino(s)." + (changedScanned > 0 ? " REMARQUE " + changedScanned + " caja(s) de la TR activa." : "")
                 + " Motivo: " + why, false);
+    }
+
+    /** Cierre de una definitiva homogénea que fue enviada al tendido por falta de posición al pie. */
+    private ActionResult closeOverflowPalletEarly(String pallet, String reason) {
+        if (validatedFinalPallets.contains(pallet)) return new ActionResult(false, pallet, pallet + " ya fue validada", false);
+        String why = reason == null ? "" : reason.trim();
+        if (why.isEmpty() || why.length() > 160)
+            return new ActionResult(false, pallet, "Indique un motivo de cierre (1–160 caracteres)", false);
+        if (partialClosureReasons.containsKey(pallet))
+            return new ActionResult(false, pallet, pallet + " ya tiene cierre parcial", false);
+        int count = palletScannedCount(pallet);
+        int expected = expectedForPallet(pallet);
+        if (count <= 0) return new ActionResult(false, pallet, "La tarima no contiene cajas", false);
+        if (count >= expected) return new ActionResult(false, pallet, "La captura está completa: verifique la tarima", false);
+        originalDirectExpected.put(pallet, expected);
+        directExpectedForPallet.put(pallet, count);
+        partialClosureReasons.put(pallet, why);
+        readyFinalPallets.add(pallet);
+        String code = codeForPallet(pallet);
+        if (!code.isEmpty() && pallet.equals(activeOverflowPalletForCode.get(code))) activeOverflowPalletForCode.remove(code);
+        return new ActionResult(true, pallet, pallet + " cerrada parcialmente con " + count + " cajas · " + why
+                + ". Las demás cajas siguen pendientes; falta verificar la tarima del tendido.", false);
+    }
+
+    private String codeForPallet(String pallet) {
+        for (Map.Entry<String, String> entry : finalPalletForBarcode.entrySet()) {
+            if (pallet.equals(entry.getValue())) return codeForBarcode(entry.getKey());
+        }
+        return "";
     }
 
     private ArrayList<ReplanGroup> replanGroups(List<String> barcodes) {
@@ -1075,6 +1131,22 @@ public class UnloadEngine implements Serializable {
         return pallet;
     }
 
+    /** Crea una definitiva homogénea en el tendido cuando todas las posiciones al pie están ocupadas. */
+    private String allocateOverflowPallet(String code) {
+        String active = activeOverflowPalletForCode.get(code);
+        if (active != null) return active;
+        String pallet = finalPalletLabel(nextFinalPalletSeq++);
+        CodeRecord record = records.get(code);
+        int remaining = record == null ? 1 : Math.max(1, record.boxes - received.get(code));
+        int capacity = record == null ? 1 : directPalletBoxCapacity(record);
+        activeOverflowPalletForCode.put(code, pallet);
+        overflowTendidoPallets.add(pallet);
+        directExpectedForPallet.put(pallet, Math.min(remaining, capacity));
+        originalDirectExpected.put(pallet, Math.min(remaining, capacity));
+        rackSuggestionForPallet.put(pallet, "RESERVA HOMOGÉNEA · NIVEL ALTO*");
+        return pallet;
+    }
+
     private int directPalletBoxCapacity(CodeRecord record) {
         int volume = record.cbmPerBox > 1e-9
                 ? Math.max(1, (int)Math.floor(settings.targetCapacity / record.cbmPerBox + 1e-9))
@@ -1129,29 +1201,29 @@ public class UnloadEngine implements Serializable {
             out.boxNumber = parsed.boxNumber; out.received = received.get(code); out.expected = r.boxes;
             return out;
         }
-        boolean direct = directFinalCodes.contains(code);
+        boolean directCode = directFinalCodes.contains(code);
+        boolean direct = false;
+        boolean overflow = false;
         String target;
-        if (direct) {
+        if (directCode) {
             target = activeDirectPalletForCode.get(code);
-            if (target != null && readyFinalPallets.contains(target)) {
-                transferIncidentCount++;
-                ScanResult blocked = ScanResult.fail("TARIMA LISTA PARA RETIRAR",
-                        target + (validatedFinalPallets.contains(target) ? " verificada: retire y libere " : ": revise su contenido antes de retirar de ")
-                                + physicalPositionForPallet(target));
-                blocked.code = code; blocked.rawScan = parsed.rawCanonical; blocked.normalizedBarcode = normalized;
-                blocked.scan = normalized; blocked.boxNumber = parsed.boxNumber; blocked.position = target;
-                blocked.finalPallet = target; blocked.received = received.get(code); blocked.expected = r.boxes;
-                return blocked;
-            }
-            target = allocateDirectPallet(code);
-            if (target == null) {
-                transferIncidentCount++;
-                ScanResult noSpace = ScanResult.fail("SIN POSICIÓN AL PIE",
-                        "Abra TARIMAS: retire una verificada o cierre una parcial por falta de espacio. Esta caja no fue contada.");
-                noSpace.code = code; noSpace.rawScan = parsed.rawCanonical; noSpace.normalizedBarcode = normalized;
-                noSpace.scan = normalized; noSpace.boxNumber = parsed.boxNumber;
-                noSpace.received = received.get(code); noSpace.expected = r.boxes;
-                return noSpace;
+            if (target != null && !readyFinalPallets.contains(target)) {
+                direct = true;
+            } else {
+                if (target != null && target.equals(activeDirectPalletForCode.get(code))) {
+                    activeDirectPalletForCode.remove(code);
+                }
+                target = activeOverflowPalletForCode.get(code);
+                if (target != null) {
+                    overflow = true;
+                } else {
+                    target = allocateDirectPallet(code);
+                    if (target != null && !readyFinalPallets.contains(target)) direct = true;
+                    else {
+                        target = allocateOverflowPallet(code);
+                        overflow = true;
+                    }
+                }
             }
             finalPalletForBarcode.put(normalized, target);
         } else {
@@ -1174,15 +1246,23 @@ public class UnloadEngine implements Serializable {
             int palletCount = palletScannedCount(target);
             int palletTarget = expectedForPallet(target);
             if (palletCount >= palletTarget || newReceived >= r.boxes) readyFinalPallets.add(target);
+        } else if (overflow) {
+            int palletCount = palletScannedCount(target);
+            int palletTarget = expectedForPallet(target);
+            if (palletCount >= palletTarget || newReceived >= r.boxes) {
+                readyFinalPallets.add(target);
+                if (target.equals(activeOverflowPalletForCode.get(code))) activeOverflowPalletForCode.remove(code);
+            }
         }
         ScanResult out = new ScanResult();
         out.ok = true; out.status = direct
                 ? (readyFinalPallets.contains(target) ? "TARIMA LISTA" : "DIRECTO A DEFINITIVA")
-                : "MARCAR Y TRASLADAR";
+                : (overflow ? "CONTINGENCIA TR" : "MARCAR Y TRASLADAR");
         out.message = direct ? (readyFinalPallets.contains(target)
                 ? "COLOCAR EN " + physicalPositionForPallet(target) + " · REVISAR " + target
                 : "FORMAR " + target + " EN " + physicalPositionForPallet(target))
-                : "MARCAR " + target.substring(2) + " · COLOCAR EN " + currentTransferPallet();
+                : (overflow ? "SIN POSICIÓN AL PIE · MARCAR " + target.substring(2) + " · COLOCAR EN " + currentTransferPallet()
+                : "MARCAR " + target.substring(2) + " · COLOCAR EN " + currentTransferPallet());
         out.code = code; out.rawScan = parsed.rawCanonical; out.normalizedBarcode = normalized;
         out.scan = normalized; out.boxNumber = parsed.boxNumber; out.uniqueBoxId = true;
         out.position = target; out.finalPallet = target; out.directToFinal = direct;
@@ -2302,9 +2382,15 @@ public class UnloadEngine implements Serializable {
                 finalPalletForBarcode.remove(key);
                 readyFinalPallets.remove(pallet);
                 if (palletScannedCount(pallet) == 0) {
-                    // No queda mercancía en esta asignación: conservar el ID en auditoría sin ocupar un espacio vacío.
-                    activeDirectPalletForCode.remove(meta.code);
-                    activeFinalPalletForFootPosition.remove(physicalPositionForPallet(pallet));
+                    // No queda mercancía: conservar el ID para auditoría, pero liberar su asignación activa.
+                    if (isOverflowTendidoPallet(pallet)) {
+                        if (pallet.equals(activeOverflowPalletForCode.get(meta.code))) {
+                            activeOverflowPalletForCode.remove(meta.code);
+                        }
+                    } else {
+                        activeDirectPalletForCode.remove(meta.code);
+                        activeFinalPalletForFootPosition.remove(physicalPositionForPallet(pallet));
+                    }
                 }
             } else {
                 readyFinalPallets.remove(pallet);

@@ -1,4 +1,4 @@
 Ilubox WMS PDA
-Versión: 0.14-optimizacion-global-q9
+Versión: 0.15-operacion-simplificada-q9
 Contrato de resultado: ilubox.pda.result.v4
-Instalación paralela: com.ilubox.descargapda.v014
+Instalación paralela: com.ilubox.descargapda.v015

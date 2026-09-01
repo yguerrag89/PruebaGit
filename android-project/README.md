@@ -1,10 +1,20 @@
-# Ilubox WMS PDA V0.14 — Optimización Global Q9
+# Ilubox WMS PDA V0.15 — Operación Simplificada Q9
 
-Aplicación Android offline para AUTOID Q9. Ejecuta el plan global sellado por Windows, valida cada caja individual, mantiene la identidad `T-xxx` separada de la posición `Ixx/Dxx` y replanifica solo lo pendiente cuando una tarima física no admite más cajas.
+Aplicación Android offline para AUTOID Q9. Ejecuta el plan global sellado por Windows, valida cada caja individual y evita detener la descarga cuando no queda una posición al pie: utiliza una definitiva homogénea de contingencia mediante la `TR-xx` activa.
 
 ## Instalación de prueba
 
-El APK se instala como **Ilubox PDA V0.14 Global** con paquete `com.ilubox.descargapda.v014`. No reemplaza versiones anteriores ni copia una sesión abierta. Importa un manifiesto nuevo para comenzar la prueba.
+El APK se instala como **Ilubox PDA V0.15 Simple** con paquete `com.ilubox.descargapda.v015`. No reemplaza versiones anteriores ni copia una sesión abierta. Importa un manifiesto nuevo para comenzar la prueba.
+
+## Operación TRASLADO simplificada
+
+1. Escanea la caja individual; la pantalla muestra su `T-xx`, avance y destino.
+2. Si corresponde al pie y existe espacio, la aplicación abre automáticamente una posición `Ixx/Dxx`.
+3. Si no existe espacio, la caja sigue siendo aceptada y pasa a la `TR-xx`, separada en una definitiva homogénea de contingencia.
+4. En **CONTROL** se pueden habilitar posiciones adicionales durante la operación.
+5. Los botones inferiores permanecen visibles y muestran solo la acción aplicable.
+6. Para cerrar una definitiva se revisa físicamente y se escanea su temporal WMS.
+7. El JSON y el reporte Excel incluyen únicamente evidencia realmente escaneada; el plan completo no se presenta como recepción real.
 
 ## Operación MANUAL ASISTIDA
 

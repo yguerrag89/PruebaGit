@@ -76,6 +76,8 @@ public final class PdaResultWriter {
                 .append(",\n  \"exceptional_pair_codes\":").append(engine.exceptionalPairCodeCount())
                 .append(",\n  \"verification_model\":\"FINAL_PALLET_WMS_TEMPORARY\"")
                 .append(",\n  \"wms_location_validation\":\"FORMAT_ONLY\"")
+                .append(",\n  \"plan_export_policy\":\"ACTUAL_SCANNED_ONLY\"")
+                .append(",\n  \"overflow_policy\":\"TRANSFER_WHEN_NO_FOOT_POSITION\"")
                 .append(",\n  \"individual_sequence\":{\"prefix\":\"U\",\"start\":1,\"consecutive\":true,\"padding\":3}")
                 .append(",\n  \"progress\":{\"received\":").append(progress[0])
                 .append(",\"expected\":").append(progress[1])
@@ -95,7 +97,10 @@ public final class PdaResultWriter {
             body.append('\n');
         }
         body.append("  ],\n  \"pallets\":[\n");
-        List<UnloadEngine.FinalPalletView> pallets = engine.finalPalletViews();
+        List<UnloadEngine.FinalPalletView> pallets = new ArrayList<>();
+        for (UnloadEngine.FinalPalletView pallet : engine.finalPalletViews()) {
+            if (pallet.scanned > 0 || pallet.validated || pallet.retired) pallets.add(pallet);
+        }
         for (int i = 0; i < pallets.size(); i++) {
             UnloadEngine.FinalPalletView pallet = pallets.get(i);
             UnloadEngine.PalletVerification proof = engine.verificationForPallet(pallet.label);
@@ -128,7 +133,7 @@ public final class PdaResultWriter {
             AcceptedScan scan = scans.get(i);
             String pallet = engine.finalPalletForBarcode.get(scan.barcode);
             String transfer = engine.transferForBarcode.get(scan.barcode);
-            boolean direct = engine.directFinalCodes.contains(scan.code) || engine.isManualFinalPallet(pallet);
+            boolean direct = engine.isFootPallet(pallet);
             body.append("    {\"raw_scan\":").append(json(scan.raw))
                     .append(",\"barcode\":").append(json(scan.barcode))
                     .append(",\"code\":").append(json(scan.code))
