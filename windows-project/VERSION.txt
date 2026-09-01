@@ -1,4 +1,4 @@
 Ilubox WMS Windows
-Versión: 0.13-manual-asistida-local
+Versión: 0.14-optimizacion-global-replanificacion
 Manifiesto PDA: ilubox.pda.manifest.v2
 Resultado PDA: ilubox.pda.result.v4 (compatible con v3/v2; v1 solo auditoría)

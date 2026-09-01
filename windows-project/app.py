@@ -28,7 +28,7 @@ APP_DIR = Path(__file__).resolve().parent
 OFFICIAL_TEMPLATE = APP_DIR / "assets" / "templates" / "Plantilla_oficial_WMS_PutawayCrossDockImport.xlsx"
 
 
-st.set_page_config(page_title="Ilubox WMS Windows V0.13", page_icon="📦", layout="wide")
+st.set_page_config(page_title="Ilubox WMS Windows V0.14", page_icon="📦", layout="wide")
 
 st.markdown(
     """
@@ -73,6 +73,9 @@ def default_settings():
     return Settings(
         physical_capacity=2.16,
         target_capacity=1.94,
+        max_weight=1000.0,
+        desirable_min_weight=600.0,
+        heavy_low_threshold=900.0,
         large_ratio=0.70,
         medium_high_ratio=0.45,
         medium_ratio=0.25,
@@ -400,7 +403,7 @@ if mode == "👷 Operador":
 # MODO SUPERVISOR
 # ==========================
 else:
-    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.13 Manual Asistida")
+    st.title("🧑‍💼 Supervisor · Ilubox WMS V0.14 Optimización Global")
     st.caption(
         "La aplicación organiza la descarga, conserva el avance localmente y prepara una copia validada "
         "de la plantilla oficial. No se conecta ni ejecuta movimientos dentro del WMS."
@@ -408,21 +411,18 @@ else:
 
     with st.expander("⚙️ Configuración de planificación", expanded=False):
         s = st.session_state.settings
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         physical = c1.number_input("Capacidad física tarima (m³)", 1.0, 3.0, float(s.physical_capacity), 0.01)
         target = c2.number_input("CBM objetivo", 1.0, float(physical), min(float(s.target_capacity), float(physical)), 0.01)
-        c4, c5, c6, c7 = st.columns(4)
-        max_unit = c4.number_input("Máx. unitarios/tarima", 5, 50, int(s.max_codes_unit), 1)
-        large = c5.slider("Grande ≥ %", 50, 95, int(s.large_ratio * 100)) / 100
-        medhi = c6.slider("Medio grande ≥ %", 30, 70, int(s.medium_high_ratio * 100)) / 100
-        med = c7.slider("Medio ≥ %", 10, 50, int(s.medium_ratio * 100)) / 100
+        max_weight = c3.number_input("Peso máximo (kg)", 600.0, 1500.0, float(s.max_weight), 25.0)
+        st.caption("600 kg es una meta cuando el volumen lo permite; 1,000 kg y el CBM objetivo son restricciones duras. No existe límite de códigos por tarima.")
         if st.button("Guardar configuración"):
             st.session_state.settings = Settings(
                 physical_capacity=float(physical), target_capacity=float(target),
-                large_ratio=large, medium_high_ratio=medhi, medium_ratio=med,
-                max_codes_unit=int(max_unit), fixed_positions=20,
+                max_weight=float(max_weight), desirable_min_weight=600.0,
+                heavy_low_threshold=min(900.0, float(max_weight)), fixed_positions=20,
             )
-            st.success("Configuración guardada. El máximo operativo permanece en 20 posiciones: 10 por lado.")
+            st.success("Configuración guardada. El tendido final no tiene límite; al pie se conservan 20 posiciones reutilizables.")
 
     st.subheader("1. Cargar Packing List")
     uploads = st.file_uploader(
@@ -546,7 +546,7 @@ else:
         ], width="stretch", hide_index=True)
 
     with tab2:
-        st.caption("G = exclusiva/grande · M = mixta controlada · U = solo códigos de una caja.")
+        st.caption("Plan global: minimiza tarimas, después divisiones de código y diversidad. Unitarios aislados; pares de 2 cajas solo por excepción. PIE-EST es capacidad estimada: la T-xx real se asigna cuando el código aparece en la PDA.")
         plan_rows = [p.as_dict() for p in pallets]
         st.dataframe(plan_rows, width="stretch", hide_index=True)
         st.download_button(
@@ -679,7 +679,7 @@ else:
         pda_result = st.session_state.pda_results.get(result_key)
         source_events = []
         source_received = 0
-        source_label = "Resultado PDA V0.13 pendiente"
+        source_label = "Resultado PDA V0.14 pendiente"
         if pda_result and pda_result.ready:
             src1, src2 = st.columns([3, 1])
             src1.success(
@@ -704,7 +704,7 @@ else:
                 render_pda_pallets(pda_result, "supervisor_pda")
         else:
             st.warning(
-                "Importa un resultado PDA V0.13 (también se admiten versiones anteriores bajo sus reglas). El escaneo local de Windows permanece disponible para pruebas "
+                "Importa un resultado PDA V0.14 (también se admiten versiones anteriores bajo sus reglas). El escaneo local de Windows permanece disponible para pruebas "
                 "y auditoría, pero no sustituye la verificación física de cada tarima."
             )
 

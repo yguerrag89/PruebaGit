@@ -337,7 +337,7 @@ public class PilotDatabase extends SQLiteOpenHelper {
                 "('POSICIÓN LISTA','TARIMA LLENA MANUAL','TARIMA REABIERTA','POSICIÓN HABILITADA','POSICIÓN DESHABILITADA'," +
                 "'DEFINITIVA FORMADA','BUFFER HABILITADO','BUFFER DESHABILITADO','TRASLADO ENVIADO'," +
                 "'TRASLADO DISTRIBUIDO','TARIMA DIRECTA CERRADA','TARIMA VALIDADA','TRASLADO CAMBIADO'," +
-                "'TARIMA PARCIAL CERRADA','TARIMA VERIFICADA','TARIMA RETIRADA')";
+                "'TARIMA PARCIAL CERRADA','CAJAS REMARCADAS','TARIMA VERIFICADA','TARIMA RETIRADA')";
         try (Cursor c = getReadableDatabase().rawQuery(sql, new String[]{String.valueOf(eventId)})) {
             return c.moveToFirst() && c.getInt(0) > 0;
         }

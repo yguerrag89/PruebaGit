@@ -271,6 +271,7 @@ public class MainActivity extends ComponentActivity {
                         ManifestImporter.ManifestData manifest = ManifestImporter.parse(new java.io.ByteArrayInputStream(response.getJSONObject("manifest").toString().getBytes(StandardCharsets.UTF_8)));
                         UnloadEngine candidate = new UnloadEngine(manifest.containerId, manifest.records, manifest.settings,
                                 response.getInt("left"),response.getInt("right"),"TRASLADO",4);
+                        applyManifestTransferPlan(candidate, manifest);
                         JSONObject binding = new JSONObject(); binding.put("server",address); binding.put("session_id",parts[0]);
                         binding.put("token",parts[1]); binding.put("device",deviceId); binding.put("manifest_hash",response.getString("manifest_hash"));
                         runOnUiThread(() -> {
@@ -406,7 +407,7 @@ public class MainActivity extends ComponentActivity {
         title.setSingleLine(true);
         r.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(60, 38)));
 
-        TextView sub = tv("V0.13 · manual asistida local", rsp(18, 13), C_GRAY, true);
+        TextView sub = tv("V0.14 · optimización global + NO CABE", rsp(18, 13), C_GRAY, true);
         sub.setGravity(Gravity.CENTER);
         r.addView(sub, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(34, 24)));
         r.addView(spacer(compactPda() ? 8 : 24));
@@ -479,10 +480,15 @@ public class MainActivity extends ComponentActivity {
 
     private int recommendedDefinitivePositions(ManifestImporter.ManifestData m) {
         if (m == null || m.records == null) return 4;
-        double target = m.settings == null ? 1.94 : m.settings.targetCapacity;
+        if (m.directCodes != null && !m.directCodes.isEmpty()) return Math.min(6, m.directCodes.size());
+        com.ilubox.descargapda.core.Settings settings = m.settings == null
+                ? new com.ilubox.descargapda.core.Settings() : m.settings;
         int directCodes = 0;
         for (com.ilubox.descargapda.core.CodeRecord c : m.records) {
-            if (c.cbm >= target * (m.settings == null ? 0.70 : m.settings.largeRatio)) directCodes++;
+            int volume = c.cbmPerBox > 0 ? Math.max(1, (int)Math.floor(settings.targetCapacity / c.cbmPerBox + 1e-9)) : c.boxes;
+            int weight = c.weightPerBox != null && c.weightPerBox > 0
+                    ? Math.max(1, (int)Math.floor(settings.maxWeight / c.weightPerBox + 1e-9)) : c.boxes;
+            if (c.boxes > Math.min(volume, weight)) directCodes++;
         }
         if (directCodes <= 0) return 0;
         return Math.min(6, directCodes);
@@ -511,8 +517,17 @@ public class MainActivity extends ComponentActivity {
 
     private UnloadEngine pendingTransferPlanner() {
         if (pendingManifest == null) return null;
-        return new UnloadEngine(pendingManifest.containerId, pendingManifest.records, pendingManifest.settings,
+        UnloadEngine engine = new UnloadEngine(pendingManifest.containerId, pendingManifest.records, pendingManifest.settings,
                 setupLeft, setupRight, "TRASLADO", setupBufferPallets);
+        applyManifestTransferPlan(engine, pendingManifest);
+        return engine;
+    }
+
+    private static void applyManifestTransferPlan(UnloadEngine engine, ManifestImporter.ManifestData manifest) {
+        if (engine == null || manifest == null) return;
+        engine.applyTransferPlan(manifest.transferAssignments, manifest.directCodes,
+                manifest.estimatedDirectPallets, manifest.unitaryPallets,
+                manifest.exceptionalPairCodes, manifest.rackSuggestions, manifest.transferStrategy);
     }
 
     private String transferPlanSummary() {
@@ -609,6 +624,7 @@ public class MainActivity extends ComponentActivity {
             }
             UnloadEngine candidate = new UnloadEngine(pendingManifest.containerId, pendingManifest.records, pendingManifest.settings,
                     setupLeft, setupRight, setupMode, setupBufferPallets);
+            if ("TRASLADO".equals(setupMode)) applyManifestTransferPlan(candidate, pendingManifest);
             try {
                 db.startNewSession(candidate, "Descarga iniciada · modo=" + setupMode
                         + " · I=" + setupLeft + " D=" + setupRight
@@ -1947,6 +1963,10 @@ public class MainActivity extends ComponentActivity {
             top.addView(state);
             row.addView(top);
             row.addView(tv("Registradas: " + v.scanned + " · previstas: " + v.expected, rsp(16, 13), C_DARK, true));
+            row.addView(tv(String.format(Locale.getDefault(), "Plan: %.2f m³ · %.0f kg · %s",
+                    v.plannedCbm, v.plannedWeight, v.rackSuggestion), rsp(12, 10), C_GRAY, false));
+            if (v.remarkRequired > 0) row.addView(tv("⚠ REMARCAR " + v.remarkRequired + " CAJA(S)", rsp(13, 11), C_RED, true));
+            if (v.splitCodeCount > 0) row.addView(tv("Código dividido · procurar rack adyacente", rsp(12, 10), C_ORANGE, true));
             String temporary = engine.wmsTemporaryForPallet(v.label);
             if (!temporary.isEmpty()) row.addView(tv("Temporal WMS: " + temporary, rsp(14, 12), C_GREEN, true));
             if (!v.closureReason.isEmpty()) row.addView(tv("Cierre parcial · previsión inicial " + v.originalExpected, rsp(12, 10), C_ORANGE, false));
@@ -1987,6 +2007,10 @@ public class MainActivity extends ComponentActivity {
         msg.append("\nVerificadas físicamente: ").append(selected.received);
         msg.append("\nCódigos registrados: ").append(selected.codeCount).append(" · previstos: ").append(selected.plannedCodeCount);
         msg.append("\nEstado: ").append(selected.status);
+        msg.append(String.format(Locale.getDefault(), "\nPlan físico: %.3f m³ · %.1f kg", selected.plannedCbm, selected.plannedWeight));
+        msg.append("\nRack sugerido: ").append(selected.rackSuggestion).append(" (sujeto a seguridad y capacidad real)");
+        if (selected.remarkRequired > 0) msg.append("\nATENCIÓN: ").append(selected.remarkRequired).append(" caja(s) deben remarcarse con el nuevo destino.");
+        if (selected.splitCodeCount > 0) msg.append("\nCódigo(s) dividido(s): ").append(selected.splitCodeCount).append(" · procurar temporales/rack adyacentes.");
         String temporary = engine.wmsTemporaryForPallet(label);
         msg.append("\nTemporal WMS: ").append(temporary.isEmpty() ? "PENDIENTE DE CAPTURA" : temporary);
         if (!selected.closureReason.isEmpty()) {
@@ -2026,10 +2050,12 @@ public class MainActivity extends ComponentActivity {
         ArrayList<String> options = new ArrayList<>();
         if (engine.validatedFinalPallets.contains(pallet) && !engine.isPalletRetired(pallet)) {
             options.add("RETIRADA / POSICIÓN LIBRE");
+        } else if (!engine.remarkRequiredForPallet(pallet).isEmpty()) {
+            options.add("CONFIRMAR CAJAS REMARCADAS");
         } else if (engine.isPalletReadyForVerification(pallet)) {
             options.add("VALIDAR Y CERRAR · TEMPORAL WMS");
-        } else if (engine.directCodeForPallet.containsKey(pallet)) {
-            options.add("CERRAR PARCIAL");
+        } else if (engine.palletScannedCount(pallet) > 0) {
+            options.add("TARIMA LLENA / NO CABE MÁS");
         }
         if (options.isEmpty()) {
             showOperationDialog(new AlertDialog.Builder(this).setTitle(pallet)
@@ -2041,23 +2067,28 @@ public class MainActivity extends ComponentActivity {
                 .setItems(options.toArray(new String[0]), (d, which) -> {
                     String action = options.get(which);
                     if (action.startsWith("VALIDAR")) showVerifyPallet(pallet);
-                    else if (action.startsWith("CERRAR")) showPartialClosure(pallet);
+                    else if (action.startsWith("TARIMA")) showPartialClosure(pallet);
+                    else if (action.startsWith("CONFIRMAR")) commitOperation("CAJAS REMARCADAS",
+                            () -> engine.confirmRemarking(pallet));
                     else showReleasePallet(pallet);
                 }).setNegativeButton("Cancelar", null).create());
     }
 
     private void showPartialClosure(String pallet) {
-        String[] reasons = {"Falta de espacio al pie", "Las cajas ya no caben", "Fin de descarga parcial"};
+        String[] reasons = {"Las cajas ya no caben físicamente", "Dimensiones o forma no previstas", "Peso o estabilidad insegura"};
         showOperationDialog(new AlertDialog.Builder(this).setTitle("Motivo de cierre · " + pallet)
                 .setItems(reasons, (d, selected) -> {
                     String reason = reasons[selected];
-                    showOperationDialog(new AlertDialog.Builder(this).setTitle("Cerrar parcial " + pallet)
+                    boolean direct = engine.directCodeForPallet.containsKey(pallet);
+                    showOperationDialog(new AlertDialog.Builder(this).setTitle("Cerrar por NO CABE · " + pallet)
                             .setMessage(engine.palletScannedCount(pallet) + " de " + engine.expectedForPallet(pallet)
-                                    + " cajas previstas. Las restantes seguirán pendientes del contenedor y necesitarán otra tarima.\n\n"
-                                    + "Después deberá verificar el contenido y retirar físicamente esta tarima.\nMotivo: " + reason)
+                                    + " cajas previstas. " + (direct
+                                    ? "Las restantes seguirán pendientes y abrirán otra directa."
+                                    : "La app congelará las cajas que ya salieron en una TR cerrada y replanificará solo lo pendiente. Las cajas de la TR activa que cambien de destino deberán remarcarse.")
+                                    + "\n\nDespués deberá verificar el contenido y capturar la temporal WMS.\nMotivo: " + reason)
                             .setNegativeButton("Cancelar", null)
-                            .setPositiveButton("CERRAR PARCIAL", (x, y) -> commitOperation("TARIMA PARCIAL CERRADA",
-                                    () -> engine.closeDirectPalletEarly(pallet, reason))).create());
+                            .setPositiveButton("CONFIRMAR NO CABE", (x, y) -> commitOperation("TARIMA PARCIAL CERRADA",
+                                    () -> engine.closeFinalPalletEarly(pallet, reason))).create());
                 }).setNegativeButton("Cancelar", null).create());
     }
 

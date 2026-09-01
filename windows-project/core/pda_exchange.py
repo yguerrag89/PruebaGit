@@ -8,6 +8,7 @@ import re
 
 from .strict_scan import canonical_scan, parse_strict_scan, record_signature
 from .wms_location import valid_wms_temporary
+from .optimizer import build_transfer_plan
 
 
 PDA_MANIFEST_SCHEMA = "ilubox.pda.manifest.v2"
@@ -40,6 +41,7 @@ class PdaImportResult:
 
 def build_pda_manifest(container, settings) -> bytes:
     records_by_code = {record.code.upper(): record for record in container.records}
+    transfer_plan = build_transfer_plan(container.records, settings)
     payload = {
         "schema": PDA_MANIFEST_SCHEMA,
         "version": 2,
@@ -52,6 +54,9 @@ def build_pda_manifest(container, settings) -> bytes:
         "settings": {
             "physical_capacity": settings.physical_capacity,
             "target_capacity": settings.target_capacity,
+            "max_weight": settings.max_weight,
+            "desirable_min_weight": settings.desirable_min_weight,
+            "heavy_low_threshold": settings.heavy_low_threshold,
             "large_ratio": settings.large_ratio,
             "medium_high_ratio": settings.medium_high_ratio,
             "medium_ratio": settings.medium_ratio,
@@ -59,6 +64,16 @@ def build_pda_manifest(container, settings) -> bytes:
             "max_codes_small": settings.max_codes_small,
             "max_codes_medium": settings.max_codes_medium,
             "max_codes_medium_high": settings.max_codes_medium_high,
+        },
+        "transfer_plan": {
+            "strategy": "GLOBAL_BFD_V014",
+            "assignments": transfer_plan.assignments,
+            "direct_codes": sorted(transfer_plan.direct_codes),
+            "estimated_direct_pallets": len(transfer_plan.direct_pallets),
+            "unitary_pallets": [p.pallet_id for p in transfer_plan.tendido_pallets
+                                if "UNITARIOS" in p.pallet_type],
+            "exceptional_pair_codes": sorted(transfer_plan.exceptional_pairs),
+            "rack_suggestions": {p.pallet_id: p.rack_class for p in transfer_plan.tendido_pallets},
         },
         "records": [
             {

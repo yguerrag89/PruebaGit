@@ -113,10 +113,12 @@ public class ContinuousEngineSelfTest {
                 new CodeRecord("DOS", 2, 0.2, 0.1, 1.0, "", "")
         ), new Settings(), 0, 0, "TRASLADO");
         ScanResult unit = composition.scanTransfer("UNO");
-        UnloadEngine.FinalPalletView view = composition.finalPalletViews().get(0);
-        check(view.codeCount == 1 && view.plannedCodeCount == 2, "códigos reales no son códigos planificados");
-        check(composition.palletCodeViews(unit.position).size() == 2 && composition.palletAcceptedBarcodes(unit.position).size() == 1,
-                "desglose compartido con pendientes e individuales bajo demanda");
+        UnloadEngine.FinalPalletView view = null;
+        for (UnloadEngine.FinalPalletView candidate : composition.finalPalletViews())
+            if (candidate.label.equals(unit.position)) view = candidate;
+        check(view != null && view.codeCount == 1 && view.plannedCodeCount == 1, "unitario aislado de códigos multicaja");
+        check(composition.palletCodeViews(unit.position).size() == 1 && composition.palletAcceptedBarcodes(unit.position).size() == 1,
+                "desglose unitario con individuales bajo demanda");
         boolean refusedIncompleteHistory = false;
         try { PdaResultWriter.write(new ByteArrayOutputStream(), composition, Collections.emptyList()); }
         catch (IllegalStateException correct) { refusedIncompleteHistory = true; }

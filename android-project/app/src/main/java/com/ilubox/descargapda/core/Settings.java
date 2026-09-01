@@ -7,6 +7,9 @@ public class Settings implements Serializable {
 
     public double physicalCapacity = 2.16;
     public double targetCapacity = 1.94;
+    public double maxWeight = 1000.0;
+    public double desirableMinWeight = 600.0;
+    public double heavyLowThreshold = 900.0;
     public double largeRatio = 0.70;
     public double mediumHighRatio = 0.45;
     public double mediumRatio = 0.25;

@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 public class UnloadEngine implements Serializable {
     private static final long serialVersionUID = 3L;
     public static final int MAX_PER_SIDE = 10;
-    public static final String ENGINE_VERSION = "0.13-manual-asistida-local";
+    public static final String ENGINE_VERSION = "0.14-optimizacion-global-replanificacion";
 
     public static class FinalPalletView implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -41,6 +41,11 @@ public class UnloadEngine implements Serializable {
         public boolean retired;
         public int originalExpected;
         public String closureReason = "";
+        public String rackSuggestion = "";
+        public double plannedCbm;
+        public double plannedWeight;
+        public int remarkRequired;
+        public int splitCodeCount;
 
         public FinalPalletView(String label, boolean direct) {
             this.label = label;
@@ -189,7 +194,14 @@ public class UnloadEngine implements Serializable {
     /** MANUAL: la posición I/D es reutilizable; la identidad T-xxx no cambia. */
     private LinkedHashMap<String, String> manualPalletForPosition = new LinkedHashMap<>();
     private HashSet<String> manualFinalPallets = new HashSet<>();
-    private int operationModelVersion = 13;
+    /** Metadatos del plan global V0.14; no alteran la identidad individual Uxxx. */
+    private HashSet<String> unitaryTendidoPallets = new HashSet<>();
+    private HashSet<String> exceptionalPairCodes = new HashSet<>();
+    private LinkedHashMap<String, String> rackSuggestionForPallet = new LinkedHashMap<>();
+    /** Cajas ya leídas en la TR activa cuyo número T cambió tras un NO CABE. */
+    private HashSet<String> remarkRequiredBarcodes = new HashSet<>();
+    private String transferPlanStrategy = "LOCAL_GLOBAL_BFD_V014";
+    private int operationModelVersion = 14;
 
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
@@ -200,6 +212,14 @@ public class UnloadEngine implements Serializable {
         if (retiredFinalPallets == null) retiredFinalPallets = new HashSet<>();
         if (manualPalletForPosition == null) manualPalletForPosition = new LinkedHashMap<>();
         if (manualFinalPallets == null) manualFinalPallets = new HashSet<>();
+        if (unitaryTendidoPallets == null) unitaryTendidoPallets = new HashSet<>();
+        if (exceptionalPairCodes == null) exceptionalPairCodes = new HashSet<>();
+        if (rackSuggestionForPallet == null) rackSuggestionForPallet = new LinkedHashMap<>();
+        if (remarkRequiredBarcodes == null) remarkRequiredBarcodes = new HashSet<>();
+        if (transferPlanStrategy == null) transferPlanStrategy = "MIGRADO";
+        if (settings.maxWeight <= 0) settings.maxWeight = 1000.0;
+        if (settings.desirableMinWeight <= 0) settings.desirableMinWeight = 600.0;
+        if (settings.heavyLowThreshold <= 0) settings.heavyLowThreshold = 900.0;
         retiredFinalPallets.addAll(retiredDirectPallets);
         for (Map.Entry<String, Integer> e : directExpectedForPallet.entrySet()) {
             if (!originalDirectExpected.containsKey(e.getKey())) originalDirectExpected.put(e.getKey(), e.getValue());
@@ -214,7 +234,7 @@ public class UnloadEngine implements Serializable {
                 startNextTransferPallet();
             }
         }
-        operationModelVersion = 13;
+        operationModelVersion = 14;
         if (isTransferMode()) refreshTendidoReadiness();
     }
 
@@ -413,6 +433,11 @@ public class UnloadEngine implements Serializable {
             v.retired = isPalletRetired(v.label);
             v.originalExpected = originalExpectedForPallet(v.label);
             v.closureReason = partialClosureReasons.containsKey(v.label) ? partialClosureReasons.get(v.label) : "";
+            v.rackSuggestion = rackSuggestionForPallet(v.label);
+            v.plannedCbm = plannedCbmForPallet(v.label);
+            v.plannedWeight = plannedWeightForPallet(v.label);
+            v.remarkRequired = remarkRequiredForPallet(v.label).size();
+            v.splitCodeCount = splitCodeCountForPallet(v.label);
             if (v.retired) v.status = "RETIRADA";
             else if (v.validated) v.status = "VERIFICADA";
             else if (isPalletReadyForVerification(v.label)) v.status = "REVISAR";
@@ -428,39 +453,158 @@ public class UnloadEngine implements Serializable {
         return out;
     }
 
-    /**
-     * Crea el tendido de códigos pequeños antes de descargar. Los códigos grandes NO se asignan
-     * por rangos Uxxx: toman dinámicamente la tarima directa que esté abierta cuando aparezcan.
-     * Así U016 puede llegar antes que U001 sin dispersar el mismo código entre tarimas.
-     */
+    private static class TransferPlanBin {
+        String label;
+        double cbm;
+        double weight;
+        boolean unitary;
+        final ArrayList<String> barcodes = new ArrayList<>();
+        final HashSet<String> codes = new HashSet<>();
+    }
+
+    private static class TransferPlanItem {
+        String barcode;
+        String code;
+        double cbm;
+        double weight;
+        TransferPlanItem(String barcode, String code, double cbm, double weight) {
+            this.barcode = barcode; this.code = code; this.cbm = cbm; this.weight = weight;
+        }
+    }
+
+    /** Respaldo local para manifiestos antiguos. Los manifiestos V0.14 aplican después el plan
+     * global calculado por Windows, que es la fuente única para ambos dispositivos. */
     private void buildTransferPlan() {
         finalPalletForBarcode.clear();
         directFinalCodes.clear();
         plannedTendidoPallets.clear();
+        unitaryTendidoPallets.clear();
+        exceptionalPairCodes.clear();
+        rackSuggestionForPallet.clear();
         estimatedDirectFinalPallets = 0;
-        int pallet = 1;
-        double used = 0.0;
+        ArrayList<TransferPlanItem> general = new ArrayList<>();
+        ArrayList<TransferPlanItem> unitary = new ArrayList<>();
         for (CodeRecord r : records.values()) {
-            boolean large = r.cbm >= settings.targetCapacity * settings.largeRatio;
-            if (large) {
+            boolean direct = r.boxes > directPalletBoxCapacity(r);
+            if (direct) {
                 directFinalCodes.add(r.code);
                 estimatedDirectFinalPallets += estimatedPalletsFor(r);
                 continue;
             }
             for (int box = 1; box <= r.boxes; box++) {
-                double unit = Math.max(0.0, r.cbmPerBox);
-                if (used > 1e-9 && used + unit > settings.targetCapacity + 1e-9) {
-                    pallet++;
-                    used = 0.0;
-                }
                 String barcode = r.code + "U" + String.format(Locale.ROOT, "%03d", box);
-                String label = finalPalletLabel(pallet);
-                finalPalletForBarcode.put(barcode, label);
-                plannedTendidoPallets.add(label);
-                used += unit;
+                TransferPlanItem item = new TransferPlanItem(barcode, r.code, Math.max(0.0, r.cbmPerBox),
+                        r.weightPerBox == null ? 0.0 : r.weightPerBox);
+                (r.boxes == 1 ? unitary : general).add(item);
             }
         }
-        nextFinalPalletSeq = plannedTendidoPallets.isEmpty() ? 1 : pallet + 1;
+        Comparator<TransferPlanItem> order = (a, b) -> {
+            int x = Double.compare(b.cbm, a.cbm);
+            if (x != 0) return x;
+            x = Double.compare(b.weight, a.weight);
+            if (x != 0) return x;
+            return a.barcode.compareTo(b.barcode);
+        };
+        Collections.sort(general, order);
+        Collections.sort(unitary, order);
+        ArrayList<TransferPlanBin> bins = new ArrayList<>();
+        packTransferItems(general, bins, false);
+        packTransferItems(unitary, bins, true);
+        for (TransferPlanBin bin : bins) {
+            plannedTendidoPallets.add(bin.label);
+            if (bin.unitary) unitaryTendidoPallets.add(bin.label);
+            rackSuggestionForPallet.put(bin.label, rackSuggestion(bin));
+            for (String barcode : bin.barcodes) finalPalletForBarcode.put(barcode, bin.label);
+        }
+        nextFinalPalletSeq = bins.size() + 1;
+        transferPlanStrategy = "LOCAL_GLOBAL_BFD_V014";
+    }
+
+    private void packTransferItems(List<TransferPlanItem> items, ArrayList<TransferPlanBin> allBins, boolean unitary) {
+        ArrayList<TransferPlanBin> family = new ArrayList<>();
+        for (TransferPlanItem item : items) {
+            TransferPlanBin best = null;
+            double bestGap = Double.MAX_VALUE;
+            for (TransferPlanBin bin : family) {
+                if (bin.cbm + item.cbm > settings.targetCapacity + 1e-9
+                        || bin.weight + item.weight > settings.maxWeight + 1e-9) continue;
+                double gap = settings.targetCapacity - (bin.cbm + item.cbm);
+                if (best == null || gap < bestGap - 1e-9
+                        || (Math.abs(gap - bestGap) <= 1e-9 && bin.codes.contains(item.code) && !best.codes.contains(item.code))) {
+                    best = bin; bestGap = gap;
+                }
+            }
+            if (best == null) {
+                best = new TransferPlanBin();
+                best.label = finalPalletLabel(allBins.size() + 1);
+                best.unitary = unitary;
+                family.add(best); allBins.add(best);
+            }
+            best.barcodes.add(item.barcode); best.codes.add(item.code);
+            best.cbm += item.cbm; best.weight += item.weight;
+        }
+    }
+
+    private String rackSuggestion(TransferPlanBin bin) {
+        if (bin.weight >= settings.heavyLowThreshold - 1e-9) return "PESO ALTO · NIVEL BAJO";
+        if (bin.unitary || bin.codes.size() >= 8) return "SURTIDO MULTICÓDIGO · NIVEL BAJO";
+        if (bin.codes.size() >= 3) return "SURTIDO · NIVEL BAJO/MEDIO";
+        return "MIXTA · NIVEL MEDIO";
+    }
+
+    /** Aplica la distribución sellada dentro del manifiesto Windows V0.14. */
+    public void applyTransferPlan(Map<String, String> assignments, Set<String> directCodes,
+                                  int estimatedDirect, Set<String> unitaryPallets,
+                                  Set<String> exceptionalPairs, Map<String, String> rackSuggestions,
+                                  String strategy) {
+        if (!isTransferMode() || assignments == null || assignments.isEmpty()) return;
+        LinkedHashMap<String, String> checked = new LinkedHashMap<>();
+        HashSet<String> pallets = new HashSet<>();
+        int maxSeq = 0;
+        if (directCodes != null) {
+            for (String code : directCodes) {
+                CodeRecord direct = records.get(code);
+                if (direct == null || direct.boxes <= directPalletBoxCapacity(direct))
+                    throw new IllegalArgumentException("Plan V0.14 inválido: directa no multitarima " + code);
+            }
+        }
+        for (CodeRecord record : records.values()) {
+            if (directCodes != null && directCodes.contains(record.code)) continue;
+            for (int box = 1; box <= record.boxes; box++) {
+                String barcode = record.code + "U" + String.format(Locale.ROOT, "%03d", box);
+                String pallet = assignments.get(barcode);
+                if (pallet == null || !pallet.matches("T-\\d+"))
+                    throw new IllegalArgumentException("Plan V0.14 incompleto: falta " + barcode);
+                checked.put(barcode, pallet);
+                pallets.add(pallet);
+                maxSeq = Math.max(maxSeq, palletNumber(pallet));
+            }
+        }
+        finalPalletForBarcode.clear();
+        finalPalletForBarcode.putAll(checked);
+        for (String pallet : pallets) {
+            if (plannedCbmForPallet(pallet) > settings.targetCapacity + 1e-9)
+                throw new IllegalArgumentException("Plan V0.14 excede CBM en " + pallet);
+            if (plannedWeightForPallet(pallet) > settings.maxWeight + 1e-9)
+                throw new IllegalArgumentException("Plan V0.14 excede el peso máximo en " + pallet);
+        }
+        directFinalCodes.clear();
+        if (directCodes != null) directFinalCodes.addAll(directCodes);
+        plannedTendidoPallets.clear();
+        plannedTendidoPallets.addAll(pallets);
+        unitaryTendidoPallets.clear();
+        if (unitaryPallets != null) unitaryTendidoPallets.addAll(unitaryPallets);
+        exceptionalPairCodes.clear();
+        if (exceptionalPairs != null) exceptionalPairCodes.addAll(exceptionalPairs);
+        rackSuggestionForPallet.clear();
+        if (rackSuggestions != null) rackSuggestionForPallet.putAll(rackSuggestions);
+        estimatedDirectFinalPallets = 0;
+        for (String code : directFinalCodes) estimatedDirectFinalPallets += estimatedPalletsFor(records.get(code));
+        if (estimatedDirect > 0 && estimatedDirect != estimatedDirectFinalPallets)
+            throw new IllegalArgumentException("Plan V0.14 inválido: estimado directo no coincide");
+        nextFinalPalletSeq = Math.max(1, maxSeq + 1);
+        transferPlanStrategy = strategy == null || strategy.trim().isEmpty() ? "GLOBAL_BFD_V014" : strategy.trim();
+        refreshTendidoReadiness();
     }
 
     public int plannedFinalPalletCount() {
@@ -474,6 +618,10 @@ public class UnloadEngine implements Serializable {
     public int directCodeCount() {
         return directFinalCodes.size();
     }
+
+    public String transferPlanStrategy() { return transferPlanStrategy; }
+
+    public int exceptionalPairCodeCount() { return exceptionalPairCodes.size(); }
 
     /** Tarimas definitivas en blanco que deben quedar al pie al iniciar. */
     public int initialDirectFootPalletCount() {
@@ -570,8 +718,211 @@ public class UnloadEngine implements Serializable {
                 + ". Las demás cajas siguen pendientes; falta verificar y retirar.", false);
     }
 
+    private static class ReplanGroup {
+        final ArrayList<String> barcodes = new ArrayList<>();
+        double cbm;
+        double weight;
+        String code = "";
+    }
+
+    /** NO CABE en tendido: congela solo lo que ya salió en una TR cerrada y redistribuye
+     * lo pendiente. Las cajas de la TR activa que cambien de T deben remarcarse. */
+    public ActionResult closeFinalPalletEarly(String pallet, String reason) {
+        if (directCodeForPallet.containsKey(pallet)) return closeDirectPalletEarly(pallet, reason);
+        if (!plannedTendidoPallets.contains(pallet))
+            return new ActionResult(false, pallet, "La tarima no pertenece al tendido planificado", false);
+        if (validatedFinalPallets.contains(pallet) || isPalletRetired(pallet))
+            return new ActionResult(false, pallet, pallet + " ya fue validada o retirada", false);
+        String why = reason == null ? "" : reason.trim();
+        if (why.isEmpty() || why.length() > 160)
+            return new ActionResult(false, pallet, "Indique un motivo de cierre (1–160 caracteres)", false);
+        if (partialClosureReasons.containsKey(pallet))
+            return new ActionResult(false, pallet, pallet + " ya tiene cierre parcial", false);
+        int original = expectedForPallet(pallet);
+        int scanned = palletScannedCount(pallet);
+        if (scanned <= 0) return new ActionResult(false, pallet, "La tarima no contiene cajas registradas", false);
+        if (scanned >= original) return new ActionResult(false, pallet, "La captura está completa: verifique la tarima", false);
+
+        ArrayList<String> frozen = new ArrayList<>();
+        ArrayList<String> movable = new ArrayList<>();
+        for (Map.Entry<String, String> entry : new ArrayList<>(finalPalletForBarcode.entrySet())) {
+            if (!pallet.equals(entry.getValue())) continue;
+            String barcode = entry.getKey();
+            String transfer = transferForBarcode.get(barcode);
+            boolean physicallySent = scannedUniqueBarcodes.containsKey(barcode)
+                    && transfer != null && isTransferClosed(transfer);
+            if (physicallySent) frozen.add(barcode); else movable.add(barcode);
+        }
+        if (frozen.isEmpty()) {
+            return new ActionResult(false, pallet,
+                    "No hay cajas de un traslado cerrado en " + pallet + ". Cambie la TR cuando salga físicamente y vuelva a cerrar.", false);
+        }
+        if (movable.isEmpty()) return new ActionResult(false, pallet, "No quedan cajas pendientes para replanificar", false);
+
+        originalDirectExpected.put(pallet, original);
+        for (String barcode : movable) finalPalletForBarcode.remove(barcode);
+        boolean unitaryFamily = unitaryTendidoPallets.contains(pallet);
+        ArrayList<ReplanGroup> groups = replanGroups(movable);
+        Collections.sort(groups, (a, b) -> {
+            int x = Double.compare(b.cbm, a.cbm);
+            if (x != 0) return x;
+            x = Double.compare(b.weight, a.weight);
+            if (x != 0) return x;
+            return a.barcodes.get(0).compareTo(b.barcodes.get(0));
+        });
+        HashSet<String> touched = new HashSet<>();
+        int changedScanned = 0;
+        for (ReplanGroup group : groups) {
+            String destination = bestReplanDestination(pallet, group, unitaryFamily);
+            if (destination == null) {
+                destination = finalPalletLabel(nextFinalPalletSeq++);
+                plannedTendidoPallets.add(destination);
+                if (unitaryFamily) unitaryTendidoPallets.add(destination);
+            }
+            touched.add(destination);
+            for (String barcode : group.barcodes) {
+                finalPalletForBarcode.put(barcode, destination);
+                ScanMeta meta = scannedUniqueBarcodes.get(barcode);
+                if (meta != null) {
+                    meta.position = destination;
+                    remarkRequiredBarcodes.add(barcode);
+                    changedScanned++;
+                }
+            }
+        }
+        partialClosureReasons.put(pallet, why);
+        readyFinalPallets.add(pallet);
+        for (String target : touched) {
+            readyFinalPallets.remove(target);
+            rackSuggestionForPallet.put(target, calculatedRackSuggestion(target));
+        }
+        rackSuggestionForPallet.put(pallet, calculatedRackSuggestion(pallet));
+        return new ActionResult(true, pallet, pallet + " cerrada con " + frozen.size()
+                + " cajas físicas; " + movable.size() + " pendientes replanificadas en " + touched.size()
+                + " destino(s)." + (changedScanned > 0 ? " REMARQUE " + changedScanned + " caja(s) de la TR activa." : "")
+                + " Motivo: " + why, false);
+    }
+
+    private ArrayList<ReplanGroup> replanGroups(List<String> barcodes) {
+        LinkedHashMap<String, ArrayList<String>> exceptional = new LinkedHashMap<>();
+        ArrayList<ReplanGroup> out = new ArrayList<>();
+        for (String barcode : barcodes) {
+            String code = codeForBarcode(barcode);
+            if (exceptionalPairCodes.contains(code)) {
+                exceptional.computeIfAbsent(code, x -> new ArrayList<>()).add(barcode);
+            } else {
+                ReplanGroup group = new ReplanGroup();
+                group.code = code; group.barcodes.add(barcode); fillReplanMeasures(group, barcode); out.add(group);
+            }
+        }
+        for (Map.Entry<String, ArrayList<String>> entry : exceptional.entrySet()) {
+            Collections.sort(entry.getValue());
+            ReplanGroup group = new ReplanGroup(); group.code = entry.getKey();
+            for (String barcode : entry.getValue()) { group.barcodes.add(barcode); fillReplanMeasures(group, barcode); }
+            out.add(group);
+        }
+        return out;
+    }
+
+    private void fillReplanMeasures(ReplanGroup group, String barcode) {
+        CodeRecord record = records.get(codeForBarcode(barcode));
+        if (record == null) return;
+        group.cbm += Math.max(0.0, record.cbmPerBox);
+        group.weight += record.weightPerBox == null ? 0.0 : record.weightPerBox;
+    }
+
+    private String bestReplanDestination(String closed, ReplanGroup group, boolean unitaryFamily) {
+        String best = null;
+        double bestGap = Double.MAX_VALUE;
+        for (String candidate : plannedTendidoPallets) {
+            if (candidate.equals(closed) || validatedFinalPallets.contains(candidate)
+                    || isPalletRetired(candidate) || partialClosureReasons.containsKey(candidate)
+                    || unitaryTendidoPallets.contains(candidate) != unitaryFamily) continue;
+            double cbm = plannedCbmForPallet(candidate) + group.cbm;
+            double weight = plannedWeightForPallet(candidate) + group.weight;
+            if (cbm > settings.targetCapacity + 1e-9 || weight > settings.maxWeight + 1e-9) continue;
+            double gap = settings.targetCapacity - cbm;
+            if (best == null || gap < bestGap - 1e-9
+                    || (Math.abs(gap - bestGap) <= 1e-9 && palletNumber(candidate) < palletNumber(best))) {
+                best = candidate; bestGap = gap;
+            }
+        }
+        return best;
+    }
+
+    private String codeForBarcode(String barcode) {
+        int u = barcode == null ? -1 : barcode.lastIndexOf('U');
+        return u > 0 ? barcode.substring(0, u) : "";
+    }
+
+    public double plannedCbmForPallet(String pallet) {
+        double total = 0.0;
+        for (Map.Entry<String, String> entry : finalPalletForBarcode.entrySet()) {
+            if (!pallet.equals(entry.getValue())) continue;
+            CodeRecord record = records.get(codeForBarcode(entry.getKey()));
+            if (record != null) total += Math.max(0.0, record.cbmPerBox);
+        }
+        return total;
+    }
+
+    public double plannedWeightForPallet(String pallet) {
+        double total = 0.0;
+        for (Map.Entry<String, String> entry : finalPalletForBarcode.entrySet()) {
+            if (!pallet.equals(entry.getValue())) continue;
+            CodeRecord record = records.get(codeForBarcode(entry.getKey()));
+            if (record != null && record.weightPerBox != null) total += record.weightPerBox;
+        }
+        return total;
+    }
+
+    private String calculatedRackSuggestion(String pallet) {
+        if (plannedWeightForPallet(pallet) >= settings.heavyLowThreshold - 1e-9) return "PESO ALTO · NIVEL BAJO";
+        if (directCodeForPallet.containsKey(pallet)) return "RESERVA HOMOGÉNEA · NIVEL ALTO*";
+        HashSet<String> codes = new HashSet<>();
+        for (Map.Entry<String, String> entry : finalPalletForBarcode.entrySet())
+            if (pallet.equals(entry.getValue())) codes.add(codeForBarcode(entry.getKey()));
+        if (unitaryTendidoPallets.contains(pallet) || codes.size() >= 8) return "SURTIDO MULTICÓDIGO · NIVEL BAJO";
+        if (codes.size() >= 3) return "SURTIDO · NIVEL BAJO/MEDIO";
+        return "MIXTA · NIVEL MEDIO";
+    }
+
+    public String rackSuggestionForPallet(String pallet) {
+        String value = rackSuggestionForPallet.get(pallet);
+        return value == null || value.isEmpty() ? calculatedRackSuggestion(pallet) : value;
+    }
+
+    public int splitCodeCountForPallet(String pallet) {
+        HashSet<String> here = new HashSet<>();
+        for (Map.Entry<String, String> entry : finalPalletForBarcode.entrySet())
+            if (pallet.equals(entry.getValue())) here.add(codeForBarcode(entry.getKey()));
+        int split = 0;
+        for (String code : here) {
+            HashSet<String> locations = new HashSet<>();
+            for (Map.Entry<String, String> entry : finalPalletForBarcode.entrySet())
+                if (code.equals(codeForBarcode(entry.getKey()))) locations.add(entry.getValue());
+            if (locations.size() > 1) split++;
+        }
+        return split;
+    }
+
+    public List<String> remarkRequiredForPallet(String pallet) {
+        ArrayList<String> out = new ArrayList<>();
+        for (String barcode : remarkRequiredBarcodes)
+            if (pallet.equals(finalPalletForBarcode.get(barcode))) out.add(barcode);
+        Collections.sort(out);
+        return out;
+    }
+
+    public ActionResult confirmRemarking(String pallet) {
+        List<String> pending = remarkRequiredForPallet(pallet);
+        if (pending.isEmpty()) return new ActionResult(false, pallet, "No hay cajas pendientes de remarcar", false);
+        remarkRequiredBarcodes.removeAll(pending);
+        return new ActionResult(true, pallet, pending.size() + " caja(s) confirmadas con la nueva marca " + pallet, false);
+    }
+
     public boolean isPalletReadyForVerification(String pallet) {
         int count = palletScannedCount(pallet);
+        if (!remarkRequiredForPallet(pallet).isEmpty()) return false;
         if (isManualFinalPallet(pallet)) {
             return count > 0 && !validatedFinalPallets.contains(pallet) && readyFinalPallets.contains(pallet);
         }
@@ -609,6 +960,11 @@ public class UnloadEngine implements Serializable {
         }
         int count = palletScannedCount(pallet);
         int expected = expectedForPallet(pallet);
+        int pendingRemark = remarkRequiredForPallet(pallet).size();
+        if (pendingRemark > 0) {
+            return new ActionResult(false, pallet, pallet + " tiene " + pendingRemark
+                    + " caja(s) de la TR activa pendientes de remarcar", false);
+        }
         if (expected <= 0 || count != expected) {
             return new ActionResult(false, pallet,
                     pallet + " tiene captura incompleta (" + count + "/" + expected + "). No puede verificarse todavía.", false);
@@ -635,7 +991,7 @@ public class UnloadEngine implements Serializable {
         if (!validatedFinalPallets.contains(pallet)) return new ActionResult(false, pallet, "Primero verifique el contenido de " + pallet, false);
         if (isPalletRetired(pallet)) return new ActionResult(false, pallet, pallet + " ya fue retirada", false);
         if (!WmsTemporaryLocation.isCanonical(wmsTemporaryForPallet(pallet)))
-            return new ActionResult(false, pallet, "Verificación anterior sin temporal WMS: no puede retirarse con V0.13.", false);
+            return new ActionResult(false, pallet, "Verificación anterior sin temporal WMS: no puede retirarse con V0.14.", false);
         if (isManualFinalPallet(pallet)) {
             String position = footPositionForFinalPallet.get(pallet);
             if (position == null || !pallet.equals(manualPalletForPosition.get(position))) {
@@ -715,8 +1071,13 @@ public class UnloadEngine implements Serializable {
     }
 
     private int directPalletBoxCapacity(CodeRecord record) {
-        double unit = Math.max(record.cbmPerBox, 1e-9);
-        return Math.max(1, (int)Math.floor(settings.targetCapacity / unit + 1e-9));
+        int volume = record.cbmPerBox > 1e-9
+                ? Math.max(1, (int)Math.floor(settings.targetCapacity / record.cbmPerBox + 1e-9))
+                : Math.max(1, record.boxes);
+        int weight = record.weightPerBox != null && record.weightPerBox > 1e-9
+                ? Math.max(1, (int)Math.floor(settings.maxWeight / record.weightPerBox + 1e-9))
+                : Math.max(1, record.boxes);
+        return Math.max(1, Math.min(volume, weight));
     }
 
     private int estimatedPalletsFor(CodeRecord record) {
@@ -1930,6 +2291,7 @@ public class UnloadEngine implements Serializable {
 
         if (isTransferMode()) {
             transferForBarcode.remove(key);
+            remarkRequiredBarcodes.remove(key);
             String pallet = finalPalletForBarcode.get(key);
             if (directFinalCodes.contains(meta.code)) {
                 finalPalletForBarcode.remove(key);

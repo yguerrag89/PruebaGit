@@ -1,31 +1,32 @@
-# Ilubox WMS V0.13 — Manual Asistida Local
+# Ilubox WMS V0.14 — Optimización Global y Replanificación
 
-Variante de prueba sin servidor: Windows prepara la descarga, una PDA Q9 opera un contenedor sin conexión y Windows valida el resultado antes de crear el XLSX exclusivo para XLWMS.
+Variante local para Windows y PDA AUTOID Q9. Windows convierte el Packing List en un plan global sellado; la PDA valida cada caja individual y ejecuta ese mismo plan sin depender del orden de descarga.
 
-## Componentes
+## Cambios principales
 
-- `windows-project`: carga el Packing List, genera el manifiesto JSON para la PDA, concilia el resultado y llena una copia de la plantilla oficial WMS.
-- `android-project`: aplicación offline de la Q9 con modo MANUAL ASISTIDA, código individual estricto y validación física por tarima.
-- `server-project`: laboratorio V0.12 conservado como referencia; no forma parte del flujo V0.13.
+- Minimiza primero la cantidad de tarimas; después, las divisiones de código y la diversidad por tarima.
+- Restricciones duras: 1.94 m³ objetivo y 1,000 kg por tarima. La meta de 600 kg se aplica solo cuando el volumen y los datos disponibles lo permiten.
+- No existe un límite artificial de códigos por tarima.
+- Los códigos de una caja se agrupan únicamente entre sí. Un código completo de dos cajas puede incorporarse como par indivisible solo si no aumenta el total.
+- Solo se forman al pie del contenedor códigos que requieren dos o más tarimas por volumen o peso.
+- El manifiesto `PDA_<contenedor>.json` incluye la asignación exacta de cada `CODIGOUxxx`; Windows y PDA no recalculan planes independientes.
+- Las tarimas multicódigo sugieren rack bajo; las homogéneas de reserva, alto. Peso y seguridad siempre tienen prioridad sobre esa sugerencia.
+- `TARIMA LLENA / NO CABE MÁS` congela lo ya enviado físicamente, cierra la tarima real y replanifica únicamente las cajas pendientes.
+- Si una caja ya escaneada permanece en la TR activa y cambia de destino, la aplicación exige remarcarla antes de validar.
+- La validación final continúa exigiendo responsable y posición temporal WMS. El XLSX para XLWMS se genera en Windows solamente con cajas físicamente validadas.
 
-## Contrato operativo V0.13
+## Flujo local
 
-1. Windows genera `PDA_<contenedor>.json` desde el Packing List.
-2. La Q9 importa ese archivo y trabaja en modo **MANUAL ASISTIDA**.
-3. El operador selecciona una posición física `Ixx/Dxx` una vez; permanece activa para los siguientes escaneos.
-4. La primera caja asigna una identidad estable `T-xxx` a la tarima física. La posición puede reutilizarse después, la T no.
-5. Cada grupo multicaja exige el código individual `CODIGOU001…CODIGOUN`; se rechazan códigos base ambiguos, duplicados y números fuera de rango.
-6. Al llenarse la tarima, el operador la cierra. Antes de retirarla debe revisar el contenido, capturar una temporal WMS válida y registrar responsable.
-7. La tarima validada no puede reabrirse. Se retira físicamente y después se libera la posición.
-8. La PDA exporta solamente `resultado_PDA_<contenedor>.json`; no genera una plantilla WMS.
-9. Windows comprueba contenedor, huella del Packing List, cajas, tarimas, temporales y totales. Solo entonces habilita el XLSX oficial.
+1. Windows carga el Packing List y muestra cuántas tarimas colocar en el tendido y cuántas dejar al pie.
+2. Windows genera el manifiesto JSON con secuencia estricta `U001…UN` y el plan global.
+3. La PDA importa el JSON y opera en modo TRASLADO.
+4. Cada caja se escanea una vez; la PDA muestra `T-xx` y `TR-xx` o la posición directa al pie.
+5. Al terminar físicamente una definitiva se revisa, se captura su temporal WMS y se valida.
+6. La PDA exporta `resultado_PDA_<contenedor>.json`.
+7. Windows concilia el resultado y habilita la copia exclusiva de la plantilla oficial XLWMS.
 
-El cierre parcial de una descarga exige confirmación y un motivo de al menos ocho caracteres. La aplicación valida el formato de la temporal, pero no su existencia ni su bodega dentro de XLWMS.
+Consulta [las reglas operativas V0.14](docs/V0_14_OPTIMIZACION_GLOBAL.md).
 
-Consulta [el flujo y checklist V0.13](docs/V0_13_MANUAL_ASISTIDA_LOCAL.md).
+## Compatibilidad
 
-## Compatibilidad y seguridad
-
-El APK usa el paquete independiente `com.ilubox.descargapda.v013`; no reemplaza versiones anteriores ni migra sus sesiones. El resultado mantiene el contrato `ilubox.pda.result.v4`, por lo que Windows conserva la conciliación estricta ya probada.
-
-Esta versión no se conecta al servidor, no modifica XLWMS y no confirma rackeo. El supervisor descarga el archivo generado y lo carga manualmente en WMS después de revisarlo.
+El APK usa el paquete independiente `com.ilubox.descargapda.v014`; puede instalarse junto con versiones anteriores. El resultado conserva `ilubox.pda.result.v4`. No se conecta ni ejecuta movimientos dentro de XLWMS.

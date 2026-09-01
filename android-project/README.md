@@ -1,10 +1,10 @@
-# Ilubox WMS PDA V0.13 — Manual Asistida Local
+# Ilubox WMS PDA V0.14 — Optimización Global Q9
 
-Aplicación Android offline para AUTOID Q9. Recibe de Windows un manifiesto de descarga, valida cada caja individual, mantiene la identidad `T-xxx` separada de la posición `Ixx/Dxx` y devuelve un resultado que Windows puede convertir en la plantilla oficial del WMS.
+Aplicación Android offline para AUTOID Q9. Ejecuta el plan global sellado por Windows, valida cada caja individual, mantiene la identidad `T-xxx` separada de la posición `Ixx/Dxx` y replanifica solo lo pendiente cuando una tarima física no admite más cajas.
 
 ## Instalación de prueba
 
-El APK se instala como **Ilubox PDA V0.13 Manual** con paquete `com.ilubox.descargapda.v013`. No reemplaza versiones anteriores ni copia una sesión abierta. Importa un manifiesto nuevo para comenzar la prueba.
+El APK se instala como **Ilubox PDA V0.14 Global** con paquete `com.ilubox.descargapda.v014`. No reemplaza versiones anteriores ni copia una sesión abierta. Importa un manifiesto nuevo para comenzar la prueba.
 
 ## Operación MANUAL ASISTIDA
 

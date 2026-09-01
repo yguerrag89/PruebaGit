@@ -224,8 +224,8 @@ public class EngineSelfTest {
 
         // V0.9 TRASLADO DIRIGIDO: Uxxx consecutivo, directas dinámicas y estado WMS estricto.
         List<CodeRecord> transferRecords = Arrays.asList(
-            new CodeRecord("GRANDE", 4, 1.60, 0.40, 30.0, "", ""),
-            new CodeRecord("GRANDE2", 2, 1.50, 0.75, 30.0, "", ""),
+            new CodeRecord("GRANDE", 5, 2.00, 0.40, 30.0, "", ""),
+            new CodeRecord("GRANDE2", 3, 2.25, 0.75, 30.0, "", ""),
             new CodeRecord("CHICO", 3, 0.30, 0.10, 5.0, "", "")
         );
         UnloadEngine t = new UnloadEngine("TRASLADO", transferRecords, s, 1, 0, "TRASLADO");
@@ -236,7 +236,7 @@ public class EngineSelfTest {
 
         // El orden de llegada no altera la tarima: U004 puede llegar antes que U001.
         ScanResult tg = t.scanTransfer("GRANDEU004");
-        ok(tg.ok && tg.directToFinal && tg.position.startsWith("T-"), "grande directo a definitiva");
+        ok(tg.ok && tg.directToFinal && tg.position.startsWith("T-"), "solo código multitarima directo a definitiva");
         ok("I01".equals(tg.physicalPosition), "grande muestra posición física al pie");
         ok(tg.transferPallet.isEmpty(), "grande no usa traslado");
         ScanResult tg1 = t.scanTransfer("GRANDEU001");

@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -25,6 +26,13 @@ public class ManifestImporter {
         public List<CodeRecord> records;
         public String sourceFile;
         public String recordSignature;
+        public LinkedHashMap<String, String> transferAssignments = new LinkedHashMap<>();
+        public Set<String> directCodes = new HashSet<>();
+        public Set<String> unitaryPallets = new HashSet<>();
+        public Set<String> exceptionalPairCodes = new HashSet<>();
+        public LinkedHashMap<String, String> rackSuggestions = new LinkedHashMap<>();
+        public int estimatedDirectPallets = 0;
+        public String transferStrategy = "";
     }
 
     private static String readAll(InputStream in) throws Exception {
@@ -40,7 +48,7 @@ public class ManifestImporter {
     public static ManifestData parse(InputStream in) throws Exception {
         JSONObject root = new JSONObject(readAll(in));
         if (!"ilubox.pda.manifest.v2".equals(root.optString("schema", ""))) {
-            throw new IllegalArgumentException("Use el archivo PDA generado por Windows V0.11 (manifiesto v2)");
+            throw new IllegalArgumentException("Use el archivo PDA generado por Windows V0.14 (manifiesto v2)");
         }
         if (root.optInt("version", 0) != 2 || !root.optBoolean("strict_individual_barcodes", false)) {
             throw new IllegalArgumentException("El manifiesto no exige códigos individuales; genere uno nuevo en Windows");
@@ -62,6 +70,9 @@ public class ManifestImporter {
         if (s != null) {
             out.settings.physicalCapacity = s.optDouble("physical_capacity", out.settings.physicalCapacity);
             out.settings.targetCapacity = s.optDouble("target_capacity", out.settings.targetCapacity);
+            out.settings.maxWeight = s.optDouble("max_weight", out.settings.maxWeight);
+            out.settings.desirableMinWeight = s.optDouble("desirable_min_weight", out.settings.desirableMinWeight);
+            out.settings.heavyLowThreshold = s.optDouble("heavy_low_threshold", out.settings.heavyLowThreshold);
             out.settings.largeRatio = s.optDouble("large_ratio", out.settings.largeRatio);
             out.settings.mediumHighRatio = s.optDouble("medium_high_ratio", out.settings.mediumHighRatio);
             out.settings.mediumRatio = s.optDouble("medium_ratio", out.settings.mediumRatio);
@@ -69,6 +80,39 @@ public class ManifestImporter {
             out.settings.maxCodesSmall = s.optInt("max_codes_small", out.settings.maxCodesSmall);
             out.settings.maxCodesMedium = s.optInt("max_codes_medium", out.settings.maxCodesMedium);
             out.settings.maxCodesMediumHigh = s.optInt("max_codes_medium_high", out.settings.maxCodesMediumHigh);
+        }
+
+        JSONObject plan = root.optJSONObject("transfer_plan");
+        if (plan != null) {
+            out.transferStrategy = plan.optString("strategy", "");
+            out.estimatedDirectPallets = plan.optInt("estimated_direct_pallets", 0);
+            JSONObject assignments = plan.optJSONObject("assignments");
+            if (assignments != null) {
+                java.util.Iterator<String> keys = assignments.keys();
+                while (keys.hasNext()) {
+                    String rawKey = keys.next();
+                    String barcode = UnloadEngine.canonicalScan(rawKey);
+                    String pallet = UnloadEngine.canonicalScan(assignments.optString(rawKey, ""));
+                    if (!barcode.isEmpty() && pallet.matches("T-\\d+")) out.transferAssignments.put(barcode, pallet);
+                }
+            }
+            JSONArray directs = plan.optJSONArray("direct_codes");
+            if (directs != null) for (int i = 0; i < directs.length(); i++)
+                out.directCodes.add(UnloadEngine.canonicalScan(directs.optString(i, "")));
+            JSONArray units = plan.optJSONArray("unitary_pallets");
+            if (units != null) for (int i = 0; i < units.length(); i++)
+                out.unitaryPallets.add(UnloadEngine.canonicalScan(units.optString(i, "")));
+            JSONArray pairs = plan.optJSONArray("exceptional_pair_codes");
+            if (pairs != null) for (int i = 0; i < pairs.length(); i++)
+                out.exceptionalPairCodes.add(UnloadEngine.canonicalScan(pairs.optString(i, "")));
+            JSONObject racks = plan.optJSONObject("rack_suggestions");
+            if (racks != null) {
+                java.util.Iterator<String> keys = racks.keys();
+                while (keys.hasNext()) {
+                    String pallet = keys.next();
+                    out.rackSuggestions.put(UnloadEngine.canonicalScan(pallet), racks.optString(pallet, ""));
+                }
+            }
         }
 
         JSONArray arr = root.getJSONArray("records");
