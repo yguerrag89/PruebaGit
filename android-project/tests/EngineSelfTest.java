@@ -8,7 +8,7 @@ public class EngineSelfTest {
     }
 
     public static void main(String[] args) {
-        ok("0.13-manual-asistida-local".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
+        ok("0.14-optimizacion-global-replanificacion".equals(UnloadEngine.ENGINE_VERSION), "versión del contrato PDA");
         Settings s = new Settings();
         List<CodeRecord> records = Arrays.asList(
             new CodeRecord("BIG", 5, 2.5, 0.5, null, "", ""),
