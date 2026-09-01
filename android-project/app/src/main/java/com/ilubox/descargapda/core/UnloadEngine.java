@@ -809,7 +809,12 @@ public class UnloadEngine implements Serializable {
         for (String barcode : barcodes) {
             String code = codeForBarcode(barcode);
             if (exceptionalPairCodes.contains(code)) {
-                exceptional.computeIfAbsent(code, x -> new ArrayList<>()).add(barcode);
+                ArrayList<String> codeBarcodes = exceptional.get(code);
+                if (codeBarcodes == null) {
+                    codeBarcodes = new ArrayList<>();
+                    exceptional.put(code, codeBarcodes);
+                }
+                codeBarcodes.add(barcode);
             } else {
                 ReplanGroup group = new ReplanGroup();
                 group.code = code; group.barcodes.add(barcode); fillReplanMeasures(group, barcode); out.add(group);
