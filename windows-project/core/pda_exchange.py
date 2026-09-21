@@ -11,8 +11,9 @@ from .wms_location import valid_wms_temporary
 from .optimizer import build_transfer_plan
 
 
-PDA_MANIFEST_SCHEMA = "ilubox.pda.manifest.v2"
-PDA_RESULT_SCHEMA = "ilubox.pda.result.v4"
+PDA_MANIFEST_SCHEMA = "ilubox.pda.manifest.v3"
+PDA_RESULT_SCHEMA = "ilubox.pda.result.v5"
+V4_PDA_RESULT_SCHEMA = "ilubox.pda.result.v4"
 V3_PDA_RESULT_SCHEMA = "ilubox.pda.result.v3"
 V2_PDA_RESULT_SCHEMA = "ilubox.pda.result.v2"
 LEGACY_PDA_RESULT_SCHEMA = "ilubox.pda.result.v1"
@@ -44,15 +45,20 @@ def build_pda_manifest(container, settings) -> bytes:
     transfer_plan = build_transfer_plan(container.records, settings)
     payload = {
         "schema": PDA_MANIFEST_SCHEMA,
-        "version": 2,
+        "version": 3,
         "container_id": container.container_id,
         "source_file": container.source_file,
         "source_sheet": getattr(container, "sheet", ""),
         "record_signature": record_signature(records_by_code),
         "strict_individual_barcodes": True,
-        "individual_sequence": {"prefix": "U", "start": 1, "consecutive": True, "padding": 3},
+        "identity_policy": {
+            "model": "MIXED_MANIFEST_DRIVEN",
+            "u_max_digits": 6,
+            "dynamic_external_ids": True,
+            "supported_modes": ["U_SEQUENCE", "HYPHEN_SEQUENCE", "HYPHEN_UNIQUE", "EXPLICIT"],
+        },
         "operation_policy": {
-            "profile": "SIMPLE_Q9_V015",
+            "profile": "SIMPLE_Q9_V016",
             "overflow": "TRANSFER_WHEN_NO_FOOT_POSITION",
             "result_export": "ACTUAL_SCANNED_ONLY",
             "transfer_confirmation": "PHYSICAL_TR_CHANGE_ONLY",
@@ -72,7 +78,7 @@ def build_pda_manifest(container, settings) -> bytes:
             "max_codes_medium_high": settings.max_codes_medium_high,
         },
         "transfer_plan": {
-            "strategy": "GLOBAL_BFD_V014",
+            "strategy": "GLOBAL_BFD_V016",
             "assignments": transfer_plan.assignments,
             "direct_codes": sorted(transfer_plan.direct_codes),
             "estimated_direct_pallets": len(transfer_plan.direct_pallets),
@@ -90,6 +96,8 @@ def build_pda_manifest(container, settings) -> bytes:
                 "weight_per_box": record.weight_per_box,
                 "description": record.description,
                 "warehouse": record.warehouse,
+                "identity_mode": record.identity_mode,
+                "expected_box_ids": list(record.expected_box_ids),
             }
             for record in container.records
         ],
@@ -113,26 +121,30 @@ def parse_pda_result(
         result.errors.append("El resultado PDA debe contener un objeto JSON.")
         return result
     supplied_schema = payload.get("schema")
-    is_v4 = supplied_schema == PDA_RESULT_SCHEMA and type(payload.get("version")) is int and payload.get("version") == 4
+    is_v5 = supplied_schema == PDA_RESULT_SCHEMA and type(payload.get("version")) is int and payload.get("version") == 5
+    is_v4 = supplied_schema == V4_PDA_RESULT_SCHEMA and type(payload.get("version")) is int and payload.get("version") == 4
     is_v3 = supplied_schema == V3_PDA_RESULT_SCHEMA and type(payload.get("version")) is int and payload.get("version") == 3
     is_v2 = supplied_schema == V2_PDA_RESULT_SCHEMA and payload.get("version") == 2
     is_legacy = supplied_schema == LEGACY_PDA_RESULT_SCHEMA and payload.get("version", 1) == 1
-    is_continuous = is_v3 or is_v4
+    is_continuous = is_v3 or is_v4 or is_v5
     has_physical_state = is_v2 or is_continuous
     if not has_physical_state and not is_legacy:
         result.errors.append("El archivo no es un resultado PDA compatible con esta versión.")
-    result.schema_version = 4 if is_v4 else (3 if is_v3 else (2 if is_v2 else (1 if is_legacy else 0)))
+    result.schema_version = 5 if is_v5 else (4 if is_v4 else (3 if is_v3 else (2 if is_v2 else (1 if is_legacy else 0))))
 
-    if has_physical_state:
+    if is_v5:
+        policy = payload.get("identity_policy")
+        if not isinstance(policy, dict) or policy.get("model") != "MIXED_MANIFEST_DRIVEN":
+            result.errors.append("El resultado PDA v5 no confirma la política de identidad mixta.")
+    elif has_physical_state:
         sequence = payload.get("individual_sequence")
         if not isinstance(sequence, dict) or not (
             str(sequence.get("prefix", "")).upper() == "U"
             and sequence.get("start") == 1
             and sequence.get("consecutive") is True
             and sequence.get("padding") == 3
-            and (not is_v4 or (type(sequence.get("start")) is int and type(sequence.get("padding")) is int))
         ):
-            result.errors.append("El resultado PDA no confirma la secuencia U001…UN consecutiva.")
+            result.errors.append("El resultado PDA legado no confirma la secuencia U001…UN consecutiva.")
 
     result.container_id = canonical_scan(payload.get("container_id", ""))
     expected_id = canonical_scan(expected_container_id)
@@ -142,7 +154,15 @@ def parse_pda_result(
         )
 
     canonical_records = {canonical_scan(code): record for code, record in records_by_code.items()}
-    expected_signature = record_signature(canonical_records)
+    if is_v5:
+        expected_signature = record_signature(canonical_records)
+    else:
+        from hashlib import sha256
+        legacy_lines = [
+            f"{code}:{int(getattr(record, 'boxes', 0))}\\n"
+            for code, record in sorted(canonical_records.items())
+        ]
+        expected_signature = sha256("".join(legacy_lines).encode("utf-8")).hexdigest()
     supplied_signature = str(payload.get("record_signature", "")).strip().lower()
     if not supplied_signature:
         result.errors.append("El resultado PDA no contiene la firma del Packing List.")
@@ -278,7 +298,7 @@ def parse_pda_result(
             if summary_position != physical_position:
                 result.errors.append(f"Registro PDA {index}: posición física de {pallet} inconsistente.")
                 continue
-            if is_v4:
+            if is_v4 or is_v5:
                 temporary = item.get("wms_temporary_location")
                 if not isinstance(temporary, str) or temporary != pallet_summary.get("wms_temporary_location"):
                     result.errors.append(f"Registro PDA {index}: temporal WMS ausente o distinta de la tarima.")
