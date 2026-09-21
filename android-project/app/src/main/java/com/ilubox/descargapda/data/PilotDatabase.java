@@ -206,6 +206,22 @@ public class PilotDatabase extends SQLiteOpenHelper {
         } finally { database.endTransaction(); }
     }
 
+    /**
+     * Guarda una lectura, su decisión operativa asociada y el motor como una sola unidad.
+     * Se usa cuando MANUAL requiere redirigir o dividir un código después de advertir al operador.
+     */
+    public void saveScanActionAndEngine(ScanResult result, String status, String position,
+                                        String message, UnloadEngine engine) throws Exception {
+        SQLiteDatabase database = getWritableDatabase();
+        database.beginTransaction();
+        try {
+            insertScanEvent(result);
+            insertSystemEvent(status, position, message);
+            saveEngine(engine);
+            database.setTransactionSuccessful();
+        } finally { database.endTransaction(); }
+    }
+
     public void saveActionAndEngine(String status, String position, String message, UnloadEngine engine) throws Exception {
         SQLiteDatabase database = getWritableDatabase();
         database.beginTransaction();

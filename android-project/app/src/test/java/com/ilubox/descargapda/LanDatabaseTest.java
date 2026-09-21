@@ -87,6 +87,44 @@ public class LanDatabaseTest {
         assertEquals(0,db.loadEngine().acceptedBoxCount());
     }
 
+    @Test public void manualDecisionCommitsScanAuditAndEngineTogether() throws Exception {
+        long before=db.syncState().getLong("revision");int events=db.allEvents().size();
+        ScanResult result=engine.scanTransfer("CAJAU001");assertTrue(result.message,result.ok);
+        db.saveScanActionAndEngine(result,"REDIRECCIÓN CÓDIGO",result.position,
+                "CAJA redirigida por prueba",engine);
+        assertEquals(events+2,db.allEvents().size());
+        assertEquals(before+1,db.syncState().getLong("revision"));
+        assertEquals(1,db.loadEngine().acceptedBoxCount());
+        assertEquals("REDIRECCIÓN CÓDIGO",db.lastEvent().status);
+    }
+
+    @Test public void manualDecisionRollsBackScanAuditAndEngineTogether() throws Exception {
+        long before=db.syncState().getLong("revision");int events=db.allEvents().size();
+        db.getWritableDatabase().execSQL("CREATE TRIGGER fail_manual_save BEFORE INSERT ON session_state BEGIN SELECT RAISE(ABORT,'test failure'); END");
+        ScanResult result=engine.scanTransfer("CAJAU001");assertTrue(result.message,result.ok);
+        try {
+            db.saveScanActionAndEngine(result,"DIVISIÓN CONFIRMADA",result.position,
+                    "CAJA dividida por prueba",engine);
+            fail();
+        } catch(Exception expected) { }
+        assertEquals(events,db.allEvents().size());
+        assertEquals(before,db.syncState().getLong("revision"));
+        assertEquals(0,db.loadEngine().acceptedBoxCount());
+    }
+
+    @Test public void appliedActionAndEngineRollbackTogether() throws Exception {
+        long before=db.syncState().getLong("revision");int events=db.allEvents().size();
+        String position=engine.enableNext("I");assertEquals("I02",position);
+        db.getWritableDatabase().execSQL("CREATE TRIGGER fail_action_save BEFORE INSERT ON session_state BEGIN SELECT RAISE(ABORT,'test failure'); END");
+        try {
+            db.saveActionAndEngine("POSICIÓN HABILITADA",position,position+" habilitada por prueba",engine);
+            fail();
+        } catch(Exception expected) { }
+        assertEquals(events,db.allEvents().size());
+        assertEquals(before,db.syncState().getLong("revision"));
+        assertEquals(1,db.loadEngine().enabledCount("I"));
+    }
+
     @Test public void rejectsUnsafeServerAddress() throws Exception {
         for(String address:Arrays.asList("http://example.com","https://user:pass@example.com","https://example.com/path","https://example.com?token=x")) {
             try { LanClient.origin(address);fail(address); } catch(IllegalArgumentException expected) { }

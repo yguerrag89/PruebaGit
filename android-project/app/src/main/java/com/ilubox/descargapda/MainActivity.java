@@ -1084,11 +1084,7 @@ public class MainActivity extends ComponentActivity {
                 .setItems(labels.toArray(new String[0]), (d, which) -> {
                     String label = labels.get(which).substring(0, 3);
                     ActionResult a = engine.setManualActivePosition(label);
-                    if (a.ok) {
-                        db.insertSystemEvent("TARIMA ACTIVA", label, a.message);
-                        saveQuietly();
-                        refreshOperator();
-                    }
+                    if (persistAppliedAction("TARIMA ACTIVA", a)) refreshOperator();
                     focusScanner();
                 })
                 .setNegativeButton("Cancelar", (d, w) -> focusScanner())
@@ -1126,13 +1122,13 @@ public class MainActivity extends ComponentActivity {
                     return;
                 }
                 ScanResult accepted = engine.scanManual(rawScan, existing, false);
-                db.insertScanEvent(accepted);
-                if (accepted.ok) {
-                    db.insertSystemEvent("REDIRECCIÓN CÓDIGO", existing,
-                            warning.code + " redirigido desde " + selected + " a " + existing);
-                    saveQuietly();
-                    lastPosition = accepted.position;
+                if (!accepted.ok) engine.setManualActivePosition(selected);
+                String actionMessage = warning.code + " redirigido desde " + selected + " a " + existing;
+                if (!persistManualDecision(accepted, "REDIRECCIÓN CÓDIGO", existing, actionMessage)) {
+                    dialog.dismiss();
+                    return;
                 }
+                if (accepted.ok) lastPosition = accepted.position;
                 dialog.dismiss();
                 showScanResult(accepted);
                 refreshOperator();
@@ -1146,13 +1142,12 @@ public class MainActivity extends ComponentActivity {
                         .setNegativeButton("No dividir", (x, y) -> focusScanner())
                         .setPositiveButton("SÍ, DIVIDIR", (x, y) -> {
                             ScanResult accepted = engine.scanManual(rawScan, selected, true);
-                            db.insertScanEvent(accepted);
-                            if (accepted.ok) {
-                                db.insertSystemEvent("DIVISIÓN CONFIRMADA", selected,
-                                        warning.code + " dividido: " + existing + " + " + selected);
-                                saveQuietly();
-                                lastPosition = accepted.position;
+                            String actionMessage = warning.code + " dividido: " + existing + " + " + selected;
+                            if (!persistManualDecision(accepted, "DIVISIÓN CONFIRMADA", selected, actionMessage)) {
+                                dialog.dismiss();
+                                return;
                             }
+                            if (accepted.ok) lastPosition = accepted.position;
                             dialog.dismiss();
                             showScanResult(accepted);
                             refreshOperator();
@@ -1434,8 +1429,7 @@ public class MainActivity extends ComponentActivity {
                 Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
                 return;
             }
-            db.insertSystemEvent("DEFINITIVA FORMADA", a.position, a.message);
-            saveQuietly();
+            if (!persistAppliedAction("DEFINITIVA FORMADA", a)) return;
             Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
             showOperator();
         });
@@ -1562,12 +1556,10 @@ public class MainActivity extends ComponentActivity {
             if (engine != null && engine.isManualMode() && !c.waitingRemoval) {
                 card.setOnClickListener(v -> {
                     ActionResult a = engine.setManualActivePosition(c.label);
-                    if (a.ok) {
+                    if (persistAppliedAction("TARIMA ACTIVA", a)) {
                         lastPosition = c.label;
-                        db.insertSystemEvent("TARIMA ACTIVA", c.label, a.message);
-                        saveQuietly();
                         refreshOperator();
-                    } else Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
+                    }
                     focusScanner();
                 });
                 card.setOnLongClickListener(v -> {
@@ -1660,26 +1652,22 @@ public class MainActivity extends ComponentActivity {
             } else if (!p.isFree() && p.boxesOnCurrentPallet > 0) {
                 b.setPositiveButton("TARIMA LLENA / NO CABE MÁS", (d, w) -> {
                     ActionResult a = engine.closePositionEarly(p.label());
-                    if (a.ok) {
-                        db.insertSystemEvent("TARIMA LLENA MANUAL", a.position, a.message);
-                        saveQuietly();
+                    if (a.ok && engine.isManualMode()) engine.getManualActivePosition();
+                    if (persistAppliedAction("TARIMA LLENA MANUAL", a)) {
                         lastPosition = a.position;
-                        if (engine.isManualMode()) engine.setManualActivePosition(a.position);
                         Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
                         refreshOperator();
-                    } else Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
+                    }
                     focusScanner();
                 });
             }
         } else if (p.waitingRemoval) {
             b.setPositiveButton("REABRIR TARIMA", (d, w) -> {
                 ActionResult a = engine.reopenPosition(p.label());
-                if (a.ok) {
-                    db.insertSystemEvent("TARIMA REABIERTA", a.position, a.message);
-                    saveQuietly();
+                if (persistAppliedAction("TARIMA REABIERTA", a)) {
                     Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
                     showSupervisor();
-                } else Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
+                }
             });
         }
         b.setOnDismissListener(d -> focusScanner());
@@ -2199,17 +2187,38 @@ public class MainActivity extends ComponentActivity {
 
     private interface EngineOperation { ActionResult run(); }
 
-    private boolean commitOperation(String event, EngineOperation operation) {
-        if (db.isServerSealed()) { Toast.makeText(this, "Descarga cerrada: solo consulta", Toast.LENGTH_LONG).show(); return false; }
-        if (storageBlocked) { Toast.makeText(this, "Operación bloqueada por fallo de guardado", Toast.LENGTH_LONG).show(); return false; }
-        ActionResult result = operation.run();
-        if (!result.ok) { Toast.makeText(this, result.message, Toast.LENGTH_LONG).show(); return false; }
+    /** Persiste una mutación ya aplicada; si falla, restaura el último motor confirmado. */
+    private boolean persistAppliedAction(String event, ActionResult result) {
+        if (!result.ok) {
+            Toast.makeText(this, result.message, Toast.LENGTH_LONG).show();
+            return false;
+        }
         try {
             db.saveActionAndEngine(event, result.position, result.message, engine);
+            return true;
         } catch (Exception failure) {
             restoreAfterSaveFailure();
             return false;
         }
+    }
+
+    /** La lectura manual y la decisión de redirigir/dividir deben confirmarse juntas. */
+    private boolean persistManualDecision(ScanResult result, String event, String position, String message) {
+        try {
+            if (result.ok) db.saveScanActionAndEngine(result, event, position, message, engine);
+            else db.saveScanAndEngine(result, engine);
+            return true;
+        } catch (Exception failure) {
+            restoreAfterSaveFailure();
+            return false;
+        }
+    }
+
+    private boolean commitOperation(String event, EngineOperation operation) {
+        if (db.isServerSealed()) { Toast.makeText(this, "Descarga cerrada: solo consulta", Toast.LENGTH_LONG).show(); return false; }
+        if (storageBlocked) { Toast.makeText(this, "Operación bloqueada por fallo de guardado", Toast.LENGTH_LONG).show(); return false; }
+        ActionResult result = operation.run();
+        if (!persistAppliedAction(event, result)) return false;
         Toast.makeText(this, result.message, Toast.LENGTH_LONG).show();
         refreshOperationScreen();
         return true;
@@ -2274,9 +2283,9 @@ public class MainActivity extends ComponentActivity {
                     if (!engine.removeLastEmptyBufferPallet()) {
                         Toast.makeText(this, "No se puede quitar: la última buffer tiene mercancía o ya queda solo una.", Toast.LENGTH_LONG).show();
                     } else {
-                        db.insertSystemEvent("BUFFER DESHABILITADO", "", "Tarima buffer retirada · quedan " + engine.bufferPalletCount());
-                        saveQuietly();
-                        showSupervisor();
+                        String message = "Tarima buffer retirada · quedan " + engine.bufferPalletCount();
+                        if (persistAppliedAction("BUFFER DESHABILITADO",
+                                new ActionResult(true, "", message, false))) showSupervisor();
                     }
                 }).show());
 
@@ -2284,9 +2293,9 @@ public class MainActivity extends ComponentActivity {
             if (!engine.addBufferPallet()) {
                 Toast.makeText(this, "Máximo 10 tarimas buffer", Toast.LENGTH_SHORT).show();
             } else {
-                db.insertSystemEvent("BUFFER HABILITADO", "", "Tarima buffer agregada · total " + engine.bufferPalletCount());
-                saveQuietly();
-                showSupervisor();
+                String message = "Tarima buffer agregada · total " + engine.bufferPalletCount();
+                if (persistAppliedAction("BUFFER HABILITADO",
+                        new ActionResult(true, "", message, false))) showSupervisor();
             }
         });
 
@@ -2313,20 +2322,15 @@ public class MainActivity extends ComponentActivity {
                 .setNegativeButton("Cancelar", null)
                 .setPositiveButton("Deshabilitar", (d, which) -> {
                     ActionResult a = engine.disableLastFree(side);
-                    if (!a.ok) Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
-                    else {
-                        db.insertSystemEvent("POSICIÓN DESHABILITADA", a.position, a.message);
-                        saveQuietly();
-                        showSupervisor();
-                    }
+                    if (persistAppliedAction("POSICIÓN DESHABILITADA", a)) showSupervisor();
                 }).show());
         plus.setOnClickListener(v -> {
             String pos = engine.enableNext(side);
             if (pos == null) Toast.makeText(this, "Ya están habilitadas las 10 posiciones de ese lado", Toast.LENGTH_SHORT).show();
             else {
-                db.insertSystemEvent("POSICIÓN HABILITADA", pos, pos + " habilitada por supervisor");
-                saveQuietly();
-                showSupervisor();
+                String message = pos + " habilitada por supervisor";
+                if (persistAppliedAction("POSICIÓN HABILITADA",
+                        new ActionResult(true, pos, message, false))) showSupervisor();
             }
         });
         row.addView(minus, new LinearLayout.LayoutParams(dp(62), dp(48)));
@@ -2375,12 +2379,6 @@ public class MainActivity extends ComponentActivity {
                     });
                 })
                 .show();
-    }
-
-    private void saveQuietly() {
-        try { db.saveEngine(engine); } catch (Exception e) {
-            Toast.makeText(this, "No se pudo guardar estado", Toast.LENGTH_SHORT).show();
-        }
     }
 
     private void exportCsv() {
@@ -2483,14 +2481,12 @@ public class MainActivity extends ComponentActivity {
             return;
         }
         ActionResult a = engine.markPositionReady(label);
-        if (a.ok) {
-            db.insertSystemEvent("POSICIÓN LISTA", a.position, a.message);
-            saveQuietly();
+        if (a.ok && engine.isManualMode()) engine.setManualActivePosition(a.position);
+        if (persistAppliedAction("POSICIÓN LISTA", a)) {
             lastPosition = a.position;
-            if (engine.isManualMode()) engine.setManualActivePosition(a.position);
             Toast.makeText(this, a.message, Toast.LENGTH_SHORT).show();
             refreshOperator();
-        } else Toast.makeText(this, a.message, Toast.LENGTH_LONG).show();
+        }
         focusScanner();
     }
 
