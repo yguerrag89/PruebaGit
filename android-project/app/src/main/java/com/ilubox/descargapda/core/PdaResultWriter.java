@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 
-/** Contrato v4: prueba física y temporal WMS pertenecen a la T, no al viaje ni al espacio reutilizable. */
+/** Contrato v5: prueba física y temporal WMS pertenecen a la T; la identidad individual puede usar varios formatos. */
 public final class PdaResultWriter {
     private PdaResultWriter() {}
 
@@ -29,8 +29,17 @@ public final class PdaResultWriter {
         ArrayList<String> codes = new ArrayList<>(engine.records.keySet());
         Collections.sort(codes);
         StringBuilder canonical = new StringBuilder();
-        for (String code : codes) canonical.append(code.trim().toUpperCase(Locale.ROOT))
-                .append(':').append(engine.records.get(code).boxes).append('\n');
+        for (String code : codes) {
+            CodeRecord record = engine.records.get(code);
+            canonical.append(code.trim().toUpperCase(Locale.ROOT))
+                    .append(':').append(record.boxes)
+                    .append(':').append(record.identityMode).append(':');
+            for (int i = 0; i < record.expectedBoxIds.size(); i++) {
+                if (i > 0) canonical.append(',');
+                canonical.append(record.expectedBoxIds.get(i));
+            }
+            canonical.append('\n');
+        }
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
         StringBuilder hex = new StringBuilder();
         for (byte b : digest) hex.append(String.format(Locale.ROOT, "%02x", b & 255));
@@ -39,7 +48,7 @@ public final class PdaResultWriter {
 
     public static void write(OutputStream output, UnloadEngine engine, List<AcceptedScan> scans) throws Exception {
         if (!engine.isTransferMode() && !engine.isManualMode()) {
-            throw new IllegalStateException("El resultado WMS v4 requiere modo TRASLADO o MANUAL ASISTIDA.");
+            throw new IllegalStateException("El resultado WMS v5 requiere modo TRASLADO o MANUAL ASISTIDA.");
         }
         if (engine.isManualMode()) {
             for (UnloadEngine.FinalPalletView pallet : engine.finalPalletViews()) {
@@ -67,7 +76,7 @@ public final class PdaResultWriter {
         stamp.setTimeZone(TimeZone.getTimeZone("UTC"));
         int[] progress = engine.progress();
         StringBuilder body = new StringBuilder(Math.max(4096, scans.size() * 550));
-        body.append("{\n  \"schema\":\"ilubox.pda.result.v4\",\n  \"version\":4,")
+        body.append("{\n  \"schema\":\"ilubox.pda.result.v5\",\n  \"version\":5,")
                 .append("\n  \"container_id\":").append(json(engine.containerId))
                 .append(",\n  \"record_signature\":").append(json(recordSignature(engine)))
                 .append(",\n  \"exported_at\":").append(json(stamp.format(new Date())))
@@ -78,7 +87,7 @@ public final class PdaResultWriter {
                 .append(",\n  \"wms_location_validation\":\"FORMAT_ONLY\"")
                 .append(",\n  \"plan_export_policy\":\"ACTUAL_SCANNED_ONLY\"")
                 .append(",\n  \"overflow_policy\":\"TRANSFER_WHEN_NO_FOOT_POSITION\"")
-                .append(",\n  \"individual_sequence\":{\"prefix\":\"U\",\"start\":1,\"consecutive\":true,\"padding\":3}")
+                .append(",\n  \"identity_policy\":{\"model\":\"MIXED_MANIFEST_DRIVEN\",\"u_max_digits\":6,\"dynamic_external_ids\":true}")
                 .append(",\n  \"progress\":{\"received\":").append(progress[0])
                 .append(",\"expected\":").append(progress[1])
                 .append(",\"in_final\":").append(engine.inFinalBoxCount())
@@ -137,6 +146,8 @@ public final class PdaResultWriter {
             body.append("    {\"raw_scan\":").append(json(scan.raw))
                     .append(",\"barcode\":").append(json(scan.barcode))
                     .append(",\"code\":").append(json(scan.code))
+                    .append(",\"identity_mode\":").append(json(engine.records.containsKey(scan.code)
+                            ? engine.records.get(scan.code).identityMode : ""))
                     .append(",\"box_number\":").append(scan.boxNumber)
                     .append(",\"final_pallet\":").append(json(pallet))
                     .append(",\"physical_position\":").append(json(engine.physicalPositionForPallet(pallet)))
