@@ -26,6 +26,7 @@ public class ManifestImporter {
         public List<CodeRecord> records;
         public String sourceFile;
         public String recordSignature;
+        public int manifestVersion;
         public LinkedHashMap<String, String> transferAssignments = new LinkedHashMap<>();
         public Set<String> directCodes = new HashSet<>();
         public Set<String> unitaryPallets = new HashSet<>();
@@ -47,19 +48,32 @@ public class ManifestImporter {
 
     public static ManifestData parse(InputStream in) throws Exception {
         JSONObject root = new JSONObject(readAll(in));
-        if (!"ilubox.pda.manifest.v2".equals(root.optString("schema", ""))) {
-            throw new IllegalArgumentException("Use el archivo PDA generado por Windows V0.15 (manifiesto v2)");
+        String schema = root.optString("schema", "");
+        int version = root.optInt("version", 0);
+        boolean v2 = "ilubox.pda.manifest.v2".equals(schema) && version == 2;
+        boolean v3 = "ilubox.pda.manifest.v3".equals(schema) && version == 3;
+        if (!v2 && !v3) {
+            throw new IllegalArgumentException("Use el archivo PDA generado por Windows V0.16 (manifiesto v3)");
         }
-        if (root.optInt("version", 0) != 2 || !root.optBoolean("strict_individual_barcodes", false)) {
+        if (!root.optBoolean("strict_individual_barcodes", false)) {
             throw new IllegalArgumentException("El manifiesto no exige códigos individuales; genere uno nuevo en Windows");
         }
-        JSONObject sequence = root.optJSONObject("individual_sequence");
-        if (sequence == null || !"U".equalsIgnoreCase(sequence.optString("prefix", ""))
-                || sequence.optInt("start", 0) != 1 || !sequence.optBoolean("consecutive", false)
-                || sequence.optInt("padding", 0) != 3) {
-            throw new IllegalArgumentException("La lista debe definir U001…UN consecutivos comenzando en 1");
+        if (v2) {
+            JSONObject sequence = root.optJSONObject("individual_sequence");
+            if (sequence == null || !"U".equalsIgnoreCase(sequence.optString("prefix", ""))
+                    || sequence.optInt("start", 0) != 1 || !sequence.optBoolean("consecutive", false)
+                    || sequence.optInt("padding", 0) != 3) {
+                throw new IllegalArgumentException("El manifiesto v2 debe definir U001…UN consecutivos");
+            }
+        } else {
+            JSONObject policy = root.optJSONObject("identity_policy");
+            if (policy == null || !"MIXED_MANIFEST_DRIVEN".equals(policy.optString("model", ""))) {
+                throw new IllegalArgumentException("El manifiesto v3 no contiene la política de identidad V0.16");
+            }
         }
+
         ManifestData out = new ManifestData();
+        out.manifestVersion = version;
         out.containerId = UnloadEngine.canonicalScan(root.optString("container_id", ""));
         if (out.containerId.isEmpty()) throw new IllegalArgumentException("Falta el identificador del contenedor");
         out.sourceFile = root.optString("source_file", "");
@@ -131,10 +145,30 @@ public class ManifestImporter {
                 throw new IllegalArgumentException("Registro inválido en la fila " + (i + 1));
             }
             if (!seenCodes.add(code)) throw new IllegalArgumentException("Código duplicado en el manifiesto: " + code);
-            records.add(new CodeRecord(code, boxes, cbm, cbmPerBox, weight, description, warehouse));
+
+            String identityMode = v3 ? r.optString("identity_mode", "") : CodeRecord.U_SEQUENCE;
+            ArrayList<String> expectedIds = new ArrayList<>();
+            JSONArray ids = r.optJSONArray("expected_box_ids");
+            if (ids != null) for (int j = 0; j < ids.length(); j++) {
+                String id = UnloadEngine.canonicalScan(ids.optString(j, ""));
+                if (!id.isEmpty()) expectedIds.add(id);
+            }
+            CodeRecord record = new CodeRecord(code, boxes, cbm, cbmPerBox, weight,
+                    description, warehouse, identityMode, expectedIds);
+            records.add(record);
         }
         if (records.isEmpty()) throw new IllegalArgumentException("El archivo no contiene códigos válidos");
-        String calculated = recordSignature(records);
+
+        // Los identificadores externos no consecutivos no pueden asignarse caja-a-caja antes del escaneo.
+        // Para esos códigos el plan debe reservar una definitiva homogénea dinámica (pie o TR de contingencia).
+        for (CodeRecord record : records) {
+            if (record.isDynamicIdentity() && !out.directCodes.contains(record.code)) {
+                throw new IllegalArgumentException("Plan v3 inválido: " + record.code
+                        + " usa identidad externa no consecutiva y debe figurar como código dinámico/directo");
+            }
+        }
+
+        String calculated = recordSignature(records, v3);
         if (out.recordSignature.isEmpty() || !out.recordSignature.equals(calculated)) {
             throw new IllegalArgumentException("La firma del Packing List no coincide; genere nuevamente el archivo PDA");
         }
@@ -142,10 +176,20 @@ public class ManifestImporter {
         return out;
     }
 
-    private static String recordSignature(List<CodeRecord> records) throws Exception {
+    private static String recordSignature(List<CodeRecord> records, boolean mixedIdentity) throws Exception {
         ArrayList<String> lines = new ArrayList<>();
         for (CodeRecord record : records) {
-            lines.add(UnloadEngine.canonicalScan(record.code) + ":" + record.boxes + "\n");
+            StringBuilder line = new StringBuilder()
+                    .append(UnloadEngine.canonicalScan(record.code)).append(':').append(record.boxes);
+            if (mixedIdentity) {
+                line.append(':').append(record.identityMode).append(':');
+                for (int i = 0; i < record.expectedBoxIds.size(); i++) {
+                    if (i > 0) line.append(',');
+                    line.append(record.expectedBoxIds.get(i));
+                }
+            }
+            line.append('\n');
+            lines.add(line.toString());
         }
         Collections.sort(lines);
         StringBuilder canonical = new StringBuilder();
