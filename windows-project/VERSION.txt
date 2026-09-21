@@ -1,4 +1,5 @@
 Ilubox WMS Windows
-Versión: 0.15-operacion-simplificada-q9
-Manifiesto PDA: ilubox.pda.manifest.v2
-Resultado PDA: ilubox.pda.result.v4 (compatible con v3/v2; v1 solo auditoría)
+Versión: 0.16-simple-codigos-flexibles-q9
+Manifiesto PDA: ilubox.pda.manifest.v3
+Resultado PDA: ilubox.pda.result.v5 (compatible con v4/v3/v2; v1 solo auditoría)
+Identidad: U_SEQUENCE / HYPHEN_SEQUENCE / HYPHEN_UNIQUE / EXPLICIT
