@@ -375,5 +375,5 @@ def transfer_layout_summary(records: list[CodeRecord], settings: Settings, foot_
         "final_total_estimated": tendido + estimated_direct,
         "direct_replacements": max(0, estimated_direct - initial_direct),
         "exceptional_pairs": len(plan.exceptional_pairs),
-        "strategy": "GLOBAL_BFD_V014",
+        "strategy": "GLOBAL_BFD_V016",
     }
