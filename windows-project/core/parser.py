@@ -65,9 +65,51 @@ class CodeRecord:
     container: str = ""
     source_file: str = ""
     source_sheet: str = ""
+    identity_mode: str = ""
+    expected_box_ids: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        self.code = norm_text(self.code).replace(" ", "").upper()
+        supplied = str(self.identity_mode or "").strip().upper()
+        ids = tuple(dict.fromkeys(
+            norm_text(x).replace(" ", "").upper()
+            for x in (self.expected_box_ids or ())
+            if norm_text(x)
+        ))
+        self.expected_box_ids = ids
+        if ids:
+            self.identity_mode = "EXPLICIT"
+        elif supplied in {"U_SEQUENCE", "HYPHEN_SEQUENCE", "HYPHEN_UNIQUE"}:
+            self.identity_mode = supplied
+        else:
+            self.identity_mode = infer_identity_mode(self.code)
+
+    @property
+    def dynamic_identity(self) -> bool:
+        return self.identity_mode == "HYPHEN_UNIQUE" and not self.expected_box_ids
+
+    def box_id(self, ordinal: int) -> str:
+        if ordinal < 1 or ordinal > self.boxes:
+            return ""
+        if self.identity_mode == "EXPLICIT":
+            return self.expected_box_ids[ordinal - 1]
+        if self.identity_mode == "HYPHEN_SEQUENCE":
+            return f"{self.code}-{ordinal}"
+        if self.identity_mode == "U_SEQUENCE":
+            return f"{self.code}U{ordinal:03d}"
+        return ""
 
     def as_dict(self):
         return asdict(self)
+
+
+def infer_identity_mode(code: str) -> str:
+    value = norm_text(code).replace(" ", "").upper()
+    if value.startswith("MOYU"):
+        return "HYPHEN_SEQUENCE"
+    if re.match(r"^(ZGA|ZGC|ZGD)\d*[-_/]", value) or value.startswith("FUE"):
+        return "HYPHEN_UNIQUE"
+    return "U_SEQUENCE"
 
 
 @dataclass
