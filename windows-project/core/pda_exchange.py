@@ -341,9 +341,9 @@ def parse_pda_result(
             "Verificado por": str(pallet_summary.get("verified_by", "")),
             "Fecha verificación": str(pallet_summary.get("verified_at", "")),
             "Método verificación": str(pallet_summary.get("verification_method", "")),
-            "Modelo verificación": "FINAL_PALLET_WMS_TEMPORARY" if is_v4 else "FINAL_PALLET" if is_v3 else "LEGACY_V2" if is_v2 else "SIN_CONFIRMACION",
-            "Temporal WMS": item.get("wms_temporary_location", "") if is_v4 else "",
-            "Temporal WMS obligatoria": is_v4,
+            "Modelo verificación": "FINAL_PALLET_WMS_TEMPORARY" if (is_v4 or is_v5) else "FINAL_PALLET" if is_v3 else "LEGACY_V2" if is_v2 else "SIN_CONFIRMACION",
+            "Temporal WMS": item.get("wms_temporary_location", "") if (is_v4 or is_v5) else "",
+            "Temporal WMS obligatoria": is_v4 or is_v5,
             "Elegible WMS": eligible,
             "Caja individual": True,
         })
@@ -351,7 +351,7 @@ def parse_pda_result(
     expected_total = sum(int(getattr(record, "boxes", 0)) for record in canonical_records.values())
     result.pallets = list(pallet_states.values())
     if is_continuous:
-        _validate_v3_summary(payload, pallet_states, result, expected_total, requires_temporary=is_v4)
+        _validate_v3_summary(payload, pallet_states, result, expected_total, requires_temporary=(is_v4 or is_v5))
     if is_v3 or is_v2:
         result.warnings.append("Resultado anterior a V0.11: no acredita temporal al cierre en la PDA; requiere asignación manual de ubicaciones en Windows.")
     if result.events and len(result.events) < expected_total:
@@ -383,11 +383,11 @@ def _validate_v3_summary(payload: dict, pallets: dict[str, dict], result: PdaImp
         result.errors.append("El resultado no declara el modelo de verificación requerido.")
     if requires_temporary and payload.get("wms_location_validation") != "FORMAT_ONLY":
         result.errors.append("La PDA debe indicar que solo comprobó el formato, no la existencia de la temporal en WMS.")
-    is_v015 = str(payload.get("engine_version", "")).startswith("0.15-")
-    if is_v015 and payload.get("plan_export_policy") != "ACTUAL_SCANNED_ONLY":
-        result.errors.append("V0.15 debe exportar únicamente tarimas y cajas realmente escaneadas.")
-    if is_v015 and payload.get("overflow_policy") != "TRANSFER_WHEN_NO_FOOT_POSITION":
-        result.errors.append("V0.15 no declara la contingencia segura cuando se agotan posiciones al pie.")
+    evidence_only = str(payload.get("engine_version", "")).startswith(("0.15-", "0.16-"))
+    if evidence_only and payload.get("plan_export_policy") != "ACTUAL_SCANNED_ONLY":
+        result.errors.append("La versión operativa debe exportar únicamente tarimas y cajas realmente escaneadas.")
+    if evidence_only and payload.get("overflow_policy") != "TRANSFER_WHEN_NO_FOOT_POSITION":
+        result.errors.append("La versión operativa no declara la contingencia segura cuando se agotan posiciones al pie.")
 
     def count(value: object) -> bool:
         return type(value) is int and value >= 0
