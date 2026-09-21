@@ -2,7 +2,9 @@ name: Build Ilubox WMS V0.14 Optimización Global
 
 on:
   push:
-    branches: [ v0-14-optimizacion-global-replanificacion ]
+    branches:
+      - v0-14-optimizacion-global-replanificacion
+      - v0-14-integridad-atomica
   workflow_dispatch:
 
 permissions:
