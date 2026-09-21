@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 public class UnloadEngine implements Serializable {
     private static final long serialVersionUID = 3L;
     public static final int MAX_PER_SIDE = 10;
-    public static final String ENGINE_VERSION = "0.15-operacion-simplificada-q9";
+    public static final String ENGINE_VERSION = "0.16-simple-codigos-flexibles-q9";
 
     public static class FinalPalletView implements Serializable {
         private static final long serialVersionUID = 1L;
@@ -88,7 +88,7 @@ public class UnloadEngine implements Serializable {
         for (Map.Entry<String, String> e : finalPalletForBarcode.entrySet()) {
             if (!pallet.equals(e.getValue())) continue;
             String barcode = e.getKey();
-            String code = barcode.substring(0, barcode.lastIndexOf('U'));
+            String code = codeForBarcode(barcode);
             PalletCodeView row = rows.get(code);
             if (row == null) { row = new PalletCodeView(code); rows.put(code, row); }
             row.expected++;
@@ -145,8 +145,11 @@ public class UnloadEngine implements Serializable {
     public final LinkedHashMap<String, Set<Integer>> receivedBoxNumbers = new LinkedHashMap<>();
     public final HashMap<String, String> positionForCode = new HashMap<>();
     public final ArrayList<Position> positions = new ArrayList<>();
-    /** Clave = barcode normalizado (CODIGOUxxx). */
+    /** Clave = identificador físico canónico de la caja (Uxxx, MOYU-n, ZGC-xxxx, etc.). */
     public final HashMap<String, ScanMeta> scannedUniqueBarcodes = new HashMap<>();
+    /** Identidades conocidas desde el manifiesto. Las externas no consecutivas se incorporan al escanear. */
+    private LinkedHashMap<String, String> expectedCodeForBarcode = new LinkedHashMap<>();
+    private LinkedHashMap<String, Integer> expectedOrdinalForBarcode = new LinkedHashMap<>();
     public final ArrayList<Integer> boxCounts = new ArrayList<>();
     public int peakPositions = 0;
     /** AUTO conserva el algoritmo original. MANUAL deja que el operador seleccione la tarima.
@@ -204,8 +207,8 @@ public class UnloadEngine implements Serializable {
     private LinkedHashMap<String, String> activeOverflowPalletForCode = new LinkedHashMap<>();
     /** Definitivas homogéneas creadas como contingencia en el tendido; nunca se confunden con PIE. */
     private HashSet<String> overflowTendidoPallets = new HashSet<>();
-    private String transferPlanStrategy = "LOCAL_GLOBAL_BFD_V015";
-    private int operationModelVersion = 15;
+    private String transferPlanStrategy = "LOCAL_GLOBAL_BFD_V016";
+    private int operationModelVersion = 16;
 
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         in.defaultReadObject();
@@ -223,6 +226,8 @@ public class UnloadEngine implements Serializable {
         if (activeOverflowPalletForCode == null) activeOverflowPalletForCode = new LinkedHashMap<>();
         if (overflowTendidoPallets == null) overflowTendidoPallets = new HashSet<>();
         if (transferPlanStrategy == null) transferPlanStrategy = "MIGRADO";
+        if (expectedCodeForBarcode == null) expectedCodeForBarcode = new LinkedHashMap<>();
+        if (expectedOrdinalForBarcode == null) expectedOrdinalForBarcode = new LinkedHashMap<>();
         if (settings.maxWeight <= 0) settings.maxWeight = 1000.0;
         if (settings.desirableMinWeight <= 0) settings.desirableMinWeight = 600.0;
         if (settings.heavyLowThreshold <= 0) settings.heavyLowThreshold = 900.0;
@@ -240,7 +245,8 @@ public class UnloadEngine implements Serializable {
                 startNextTransferPallet();
             }
         }
-        operationModelVersion = 15;
+        operationModelVersion = 16;
+        rebuildExpectedIdentityIndex();
         if (isTransferMode()) refreshTendidoReadiness();
     }
 
@@ -271,6 +277,7 @@ public class UnloadEngine implements Serializable {
             boxCounts.add(Math.max(1, r.boxes));
         }
         Collections.sort(boxCounts);
+        rebuildExpectedIdentityIndex();
 
         int left = clamp(initialLeft, 0, MAX_PER_SIDE);
         int right = clamp(initialRight, 0, MAX_PER_SIDE);
@@ -406,9 +413,7 @@ public class UnloadEngine implements Serializable {
         for (Map.Entry<String, String> e : finalPalletForBarcode.entrySet()) {
             String barcode = e.getKey();
             String pallet = e.getValue();
-            String code = "";
-            int u = barcode.lastIndexOf('U');
-            if (u > 0) code = barcode.substring(0, u);
+            String code = codeForBarcode(barcode);
             FinalPalletView v = views.get(pallet);
             if (v == null) {
                 v = new FinalPalletView(pallet, directCodeForPallet.containsKey(pallet) || isManualFinalPallet(pallet));
@@ -462,6 +467,33 @@ public class UnloadEngine implements Serializable {
         return out;
     }
 
+    private void rebuildExpectedIdentityIndex() {
+        expectedCodeForBarcode.clear();
+        expectedOrdinalForBarcode.clear();
+        for (CodeRecord record : records.values()) {
+            if (!record.hasKnownIdentities()) continue;
+            for (int ordinal = 1; ordinal <= record.boxes; ordinal++) {
+                String barcode = canonicalScan(record.expectedBarcode(ordinal));
+                if (barcode.isEmpty()) continue;
+                String previous = expectedCodeForBarcode.put(barcode, record.code);
+                if (previous != null && !previous.equals(record.code)) {
+                    throw new IllegalArgumentException("Identidad de caja repetida entre códigos: " + barcode);
+                }
+                expectedOrdinalForBarcode.put(barcode, ordinal);
+            }
+        }
+    }
+
+    /** Devuelve el código propietario sin depender del carácter U. */
+    private String codeForKnownBarcode(String barcode) {
+        if (barcode == null) return "";
+        String key = canonicalScan(barcode);
+        ScanMeta scanned = scannedUniqueBarcodes.get(key);
+        if (scanned != null && scanned.code != null && !scanned.code.isEmpty()) return scanned.code;
+        String known = expectedCodeForBarcode.get(key);
+        return known == null ? "" : known;
+    }
+
     private static class TransferPlanBin {
         String label;
         double cbm;
@@ -494,14 +526,16 @@ public class UnloadEngine implements Serializable {
         ArrayList<TransferPlanItem> general = new ArrayList<>();
         ArrayList<TransferPlanItem> unitary = new ArrayList<>();
         for (CodeRecord r : records.values()) {
-            boolean direct = r.boxes > directPalletBoxCapacity(r);
+            boolean direct = r.isDynamicIdentity() || r.boxes > directPalletBoxCapacity(r);
             if (direct) {
                 directFinalCodes.add(r.code);
                 estimatedDirectFinalPallets += estimatedPalletsFor(r);
                 continue;
             }
             for (int box = 1; box <= r.boxes; box++) {
-                String barcode = r.code + "U" + String.format(Locale.ROOT, "%03d", box);
+                String barcode = r.expectedBarcode(box);
+                if (barcode == null || barcode.isEmpty()) throw new IllegalArgumentException(
+                        "No se pudo construir identidad esperada para " + r.code + " caja " + box);
                 TransferPlanItem item = new TransferPlanItem(barcode, r.code, Math.max(0.0, r.cbmPerBox),
                         r.weightPerBox == null ? 0.0 : r.weightPerBox);
                 (r.boxes == 1 ? unitary : general).add(item);
@@ -526,7 +560,7 @@ public class UnloadEngine implements Serializable {
             for (String barcode : bin.barcodes) finalPalletForBarcode.put(barcode, bin.label);
         }
         nextFinalPalletSeq = bins.size() + 1;
-        transferPlanStrategy = "LOCAL_GLOBAL_BFD_V015";
+        transferPlanStrategy = "LOCAL_GLOBAL_BFD_V016";
     }
 
     private void packTransferItems(List<TransferPlanItem> items, ArrayList<TransferPlanBin> allBins, boolean unitary) {
@@ -573,17 +607,19 @@ public class UnloadEngine implements Serializable {
         if (directCodes != null) {
             for (String code : directCodes) {
                 CodeRecord direct = records.get(code);
-                if (direct == null || direct.boxes <= directPalletBoxCapacity(direct))
-                    throw new IllegalArgumentException("Plan V0.14 inválido: directa no multitarima " + code);
+                if (direct == null || (!direct.isDynamicIdentity() && direct.boxes <= directPalletBoxCapacity(direct)))
+                    throw new IllegalArgumentException("Plan V0.16 inválido: directa no multitarima/dinámica " + code);
             }
         }
         for (CodeRecord record : records.values()) {
             if (directCodes != null && directCodes.contains(record.code)) continue;
             for (int box = 1; box <= record.boxes; box++) {
-                String barcode = record.code + "U" + String.format(Locale.ROOT, "%03d", box);
+                String barcode = record.expectedBarcode(box);
+                if (barcode == null || barcode.isEmpty())
+                    throw new IllegalArgumentException("Plan V0.16 no puede anticipar identidad de " + record.code);
                 String pallet = assignments.get(barcode);
                 if (pallet == null || !pallet.matches("T-\\d+"))
-                    throw new IllegalArgumentException("Plan V0.14 incompleto: falta " + barcode);
+                    throw new IllegalArgumentException("Plan V0.16 incompleto: falta " + barcode);
                 checked.put(barcode, pallet);
                 pallets.add(pallet);
                 maxSeq = Math.max(maxSeq, palletNumber(pallet));
@@ -593,9 +629,9 @@ public class UnloadEngine implements Serializable {
         finalPalletForBarcode.putAll(checked);
         for (String pallet : pallets) {
             if (plannedCbmForPallet(pallet) > settings.targetCapacity + 1e-9)
-                throw new IllegalArgumentException("Plan V0.14 excede CBM en " + pallet);
+                throw new IllegalArgumentException("Plan V0.16 excede CBM en " + pallet);
             if (plannedWeightForPallet(pallet) > settings.maxWeight + 1e-9)
-                throw new IllegalArgumentException("Plan V0.14 excede el peso máximo en " + pallet);
+                throw new IllegalArgumentException("Plan V0.16 excede el peso máximo en " + pallet);
         }
         directFinalCodes.clear();
         if (directCodes != null) directFinalCodes.addAll(directCodes);
@@ -610,9 +646,9 @@ public class UnloadEngine implements Serializable {
         estimatedDirectFinalPallets = 0;
         for (String code : directFinalCodes) estimatedDirectFinalPallets += estimatedPalletsFor(records.get(code));
         if (estimatedDirect > 0 && estimatedDirect != estimatedDirectFinalPallets)
-            throw new IllegalArgumentException("Plan V0.14 inválido: estimado directo no coincide");
+            throw new IllegalArgumentException("Plan V0.16 inválido: estimado directo no coincide");
         nextFinalPalletSeq = Math.max(1, maxSeq + 1);
-        transferPlanStrategy = strategy == null || strategy.trim().isEmpty() ? "GLOBAL_BFD_V014" : strategy.trim();
+        transferPlanStrategy = strategy == null || strategy.trim().isEmpty() ? "GLOBAL_BFD_V016" : strategy.trim();
         refreshTendidoReadiness();
     }
 
@@ -912,8 +948,14 @@ public class UnloadEngine implements Serializable {
     }
 
     private String codeForBarcode(String barcode) {
-        int u = barcode == null ? -1 : barcode.lastIndexOf('U');
-        return u > 0 ? barcode.substring(0, u) : "";
+        String known = codeForKnownBarcode(barcode);
+        if (!known.isEmpty()) return known;
+        String raw = canonicalScan(barcode);
+        String best = "";
+        for (String code : records.keySet()) {
+            if (raw.startsWith(code) && code.length() > best.length()) best = code;
+        }
+        return best;
     }
 
     public double plannedCbmForPallet(String pallet) {
@@ -1194,7 +1236,21 @@ public class UnloadEngine implements Serializable {
             out.firstScanTime = prior.time; out.received = received.get(code); out.expected = r.boxes;
             return out;
         }
-        if (parsed.boxNumber > r.boxes) {
+        if (r.isDynamicIdentity() && receivedBoxNumbers.get(code).contains(parsed.boxNumber)) {
+            transferIncidentCount++;
+            ScanResult out = ScanResult.fail("DUPLICADA", "YA ESCANEADA · mismo identificador externo");
+            out.code = code; out.rawScan = parsed.rawCanonical; out.normalizedBarcode = normalized; out.scan = normalized;
+            out.boxNumber = parsed.boxNumber; out.received = received.get(code); out.expected = r.boxes;
+            return out;
+        }
+        if (r.isDynamicIdentity() && received.get(code) >= r.boxes) {
+            transferIncidentCount++;
+            ScanResult out = ScanResult.fail("EXCESO", "POSIBLE SOBRANTE · ya se recibieron " + r.boxes + " cajas únicas");
+            out.code = code; out.rawScan = parsed.rawCanonical; out.normalizedBarcode = normalized; out.scan = normalized;
+            out.boxNumber = parsed.boxNumber; out.received = received.get(code); out.expected = r.boxes;
+            return out;
+        }
+        if (!r.isDynamicIdentity() && parsed.boxNumber > r.boxes) {
             transferIncidentCount++;
             ScanResult out = ScanResult.fail("FUERA DE RANGO", "POSIBLE SOBRANTE · esperadas " + r.boxes);
             out.code = code; out.rawScan = parsed.rawCanonical; out.normalizedBarcode = normalized; out.scan = normalized;
@@ -1238,6 +1294,10 @@ public class UnloadEngine implements Serializable {
         }
         Set<Integer> set = receivedBoxNumbers.get(code);
         set.add(parsed.boxNumber);
+        if (r.isDynamicIdentity()) {
+            expectedCodeForBarcode.put(normalized, code);
+            expectedOrdinalForBarcode.put(normalized, set.size());
+        }
         int newReceived = set.size();
         received.put(code, newReceived);
         scannedUniqueBarcodes.put(normalized, new ScanMeta(target, code, now(), parsed.boxNumber, parsed.rawCanonical));
@@ -1319,14 +1379,39 @@ public class UnloadEngine implements Serializable {
             return out;
         }
 
+        // 1) Si Windows conoce la identidad exacta, esa evidencia tiene prioridad sobre cualquier patrón.
+        ArrayList<String> exactMatches = new ArrayList<>();
+        for (String expected : expectedCodeForBarcode.keySet()) {
+            if (out.rawCanonical.contains(expected)) exactMatches.add(expected);
+        }
+        if (!exactMatches.isEmpty()) {
+            Collections.sort(exactMatches, (a,b) -> Integer.compare(b.length(), a.length()));
+            int longest = exactMatches.get(0).length();
+            HashSet<String> top = new HashSet<>();
+            for (String x : exactMatches) if (x.length() == longest) top.add(x);
+            if (top.size() != 1) {
+                out.status = "LECTURA AMBIGUA";
+                out.message = "La lectura contiene más de una identidad esperada. Escanee nuevamente.";
+                return out;
+            }
+            String barcode = top.iterator().next();
+            out.code = expectedCodeForBarcode.get(barcode);
+            Integer ordinal = expectedOrdinalForBarcode.get(barcode);
+            out.boxNumber = ordinal == null ? 0 : ordinal;
+            out.normalizedBarcode = barcode;
+            out.valid = out.boxNumber > 0;
+            return out;
+        }
+
+        // 2) Resolver la familia/código por coincidencia más larga.
         String best = null;
         boolean ambiguousCode = false;
-        for (String c : records.keySet()) {
-            if (!out.rawCanonical.contains(c)) continue;
-            if (best == null || c.length() > best.length()) {
-                best = c;
+        for (String code : records.keySet()) {
+            if (!out.rawCanonical.contains(code)) continue;
+            if (best == null || code.length() > best.length()) {
+                best = code;
                 ambiguousCode = false;
-            } else if (c.length() == best.length() && !c.equals(best)) {
+            } else if (code.length() == best.length() && !code.equals(best)) {
                 ambiguousCode = true;
             }
         }
@@ -1341,41 +1426,97 @@ public class UnloadEngine implements Serializable {
             return out;
         }
         out.code = best;
-        CodeRecord r = records.get(best);
+        CodeRecord record = records.get(best);
 
-        // Uxxx debe estar asociado al código detectado. No aceptamos un U suelto de otra
-        // etiqueta o de un prefijo del lector, porque inventaría una identidad de caja.
-        LinkedHashMap<Integer, Boolean> candidates = new LinkedHashMap<>();
-        Pattern exact = Pattern.compile(Pattern.quote(best) + "[^A-Z0-9]{0,3}U(\\d{1,3})(?!\\d)");
-        Matcher em = exact.matcher(out.rawCanonical);
-        while (em.find()) {
-            try { candidates.put(Integer.parseInt(em.group(1)), true); } catch (Exception ignored) {}
+        if (CodeRecord.EXPLICIT.equals(record.identityMode)) {
+            out.status = "NO ENCONTRADA";
+            out.message = "El código pertenece al Packing List, pero la caja individual no está en la lista esperada.";
+            return out;
         }
 
-        if (candidates.isEmpty()) {
-            // Para un código unitario, el código base por sí solo identifica de forma inequívoca U001.
-            if (r.boxes == 1 && out.rawCanonical.equals(best)) {
-                candidates.put(1, true);
-            } else {
-                out.status = "LECTURA INCOMPLETA";
-                out.message = "Falta el identificador individual Uxxx. Escanee la etiqueta de la caja.";
+        if (CodeRecord.U_SEQUENCE.equals(record.identityMode)) {
+            LinkedHashMap<Integer, Boolean> candidates = new LinkedHashMap<>();
+            Pattern exact = Pattern.compile(Pattern.quote(best) + "[^A-Z0-9]{0,3}U(\\d{1,6})(?!\\d)");
+            Matcher matcher = exact.matcher(out.rawCanonical);
+            while (matcher.find()) {
+                try { candidates.put(Integer.parseInt(matcher.group(1)), true); } catch (Exception ignored) {}
+            }
+            if (candidates.isEmpty()) {
+                if (record.boxes == 1 && out.rawCanonical.equals(best)) candidates.put(1, true);
+                else {
+                    out.status = "LECTURA INCOMPLETA";
+                    out.message = "Falta el identificador individual Uxxx. Escanee la etiqueta de la caja.";
+                    return out;
+                }
+            }
+            if (candidates.size() != 1) {
+                out.status = "LECTURA AMBIGUA";
+                out.message = "Se detectaron varios números de caja. Escanee nuevamente.";
                 return out;
             }
-        }
-        if (candidates.size() > 1) {
-            out.status = "LECTURA AMBIGUA";
-            out.message = "Se detectaron varios números de caja. Escanee nuevamente.";
+            int number = candidates.keySet().iterator().next();
+            if (number < 1 || number > record.boxes) {
+                out.boxNumber = number;
+                out.normalizedBarcode = best + "U" + String.format(Locale.ROOT, "%03d", number);
+                out.status = "FUERA DE RANGO";
+                out.message = "POSIBLE SOBRANTE · esperadas " + record.boxes + " cajas";
+                return out;
+            }
+            out.boxNumber = number;
+            out.normalizedBarcode = best + "U" + String.format(Locale.ROOT, "%03d", number);
+            out.valid = true;
             return out;
         }
 
-        int boxNumber = candidates.keySet().iterator().next();
-        if (boxNumber <= 0) {
-            out.status = "LECTURA INVÁLIDA";
-            out.message = "Número de caja inválido";
+        if (CodeRecord.HYPHEN_SEQUENCE.equals(record.identityMode)) {
+            Pattern p = Pattern.compile(Pattern.quote(best) + "[-/_](\\d{1,6})(?!\\d)");
+            Matcher m = p.matcher(out.rawCanonical);
+            HashSet<Integer> numbers = new HashSet<>();
+            while (m.find()) numbers.add(Integer.parseInt(m.group(1)));
+            if (numbers.size() != 1) {
+                out.status = numbers.isEmpty() ? "LECTURA INCOMPLETA" : "LECTURA AMBIGUA";
+                out.message = numbers.isEmpty()
+                        ? "Falta el número individual después del código."
+                        : "Se detectaron varios números de caja. Escanee nuevamente.";
+                return out;
+            }
+            int number = numbers.iterator().next();
+            if (number < 1 || number > record.boxes) {
+                out.boxNumber = number;
+                out.normalizedBarcode = best + "-" + number;
+                out.status = "FUERA DE RANGO";
+                out.message = "POSIBLE SOBRANTE · esperadas " + record.boxes + " cajas";
+                return out;
+            }
+            out.boxNumber = number;
+            out.normalizedBarcode = best + "-" + number;
+            out.valid = true;
             return out;
         }
-        out.boxNumber = boxNumber;
-        out.normalizedBarcode = best + "U" + String.format(Locale.ROOT, "%03d", boxNumber);
+
+        // ZGA/ZGC/ZGD/FUE: el sufijo es una identidad externa, no un ordinal 1..N.
+        Pattern p = Pattern.compile(Pattern.quote(best) + "[-/_](\\d{1,8})(?!\\d)");
+        Matcher m = p.matcher(out.rawCanonical);
+        LinkedHashMap<Integer,String> ids = new LinkedHashMap<>();
+        while (m.find()) {
+            int numeric = Integer.parseInt(m.group(1));
+            ids.put(numeric, best + "-" + m.group(1));
+        }
+        if (ids.size() != 1) {
+            out.status = ids.isEmpty() ? "LECTURA INCOMPLETA" : "LECTURA AMBIGUA";
+            out.message = ids.isEmpty()
+                    ? "Falta el identificador individual externo de la caja."
+                    : "Se detectaron varios identificadores. Escanee nuevamente.";
+            return out;
+        }
+        int external = ids.keySet().iterator().next();
+        if (external <= 0) {
+            out.status = "LECTURA INVÁLIDA";
+            out.message = "Identificador individual inválido";
+            return out;
+        }
+        out.boxNumber = external;
+        out.normalizedBarcode = ids.get(external);
         out.valid = true;
         return out;
     }
@@ -1649,7 +1790,7 @@ public class UnloadEngine implements Serializable {
         }
 
         // Una Uxxx fuera del rango declarado es posible sobrante. No se contabiliza.
-        if (boxNumber > r.boxes) {
+        if (!r.isDynamicIdentity() && boxNumber > r.boxes) {
             ScanResult out = ScanResult.fail("FUERA DE RANGO",
                     "POSIBLE SOBRANTE · Packing List U001–U" + String.format(Locale.ROOT, "%03d", r.boxes)
                             + " · recibida U" + String.format(Locale.ROOT, "%03d", boxNumber));
@@ -1828,7 +1969,7 @@ public class UnloadEngine implements Serializable {
             return out;
         }
 
-        if (boxNumber > r.boxes) {
+        if (!r.isDynamicIdentity() && boxNumber > r.boxes) {
             ScanResult out = ScanResult.fail("FUERA DE RANGO",
                     "POSIBLE SOBRANTE · Packing List U001–U" + String.format(Locale.ROOT, "%03d", r.boxes)
                             + " · recibida U" + String.format(Locale.ROOT, "%03d", boxNumber));
@@ -2082,7 +2223,7 @@ public class UnloadEngine implements Serializable {
             return out;
         }
 
-        if (boxNumber > r.boxes) {
+        if (!r.isDynamicIdentity() && boxNumber > r.boxes) {
             ScanResult out = ScanResult.fail("FUERA DE RANGO",
                     "POSIBLE SOBRANTE · Packing List U001–U" + String.format(Locale.ROOT, "%03d", r.boxes)
                             + " · recibida U" + String.format(Locale.ROOT, "%03d", boxNumber));
@@ -2457,11 +2598,17 @@ public class UnloadEngine implements Serializable {
         ArrayList<String> out = new ArrayList<>();
         CodeRecord r = records.get(code);
         if (r == null) return out;
+        if (r.isDynamicIdentity()) {
+            int missing = Math.max(0, r.boxes - received.get(code));
+            if (missing > 0) out.add(missing + " caja(s) externas aún no escaneadas");
+            return out;
+        }
         Set<Integer> set = receivedBoxNumbers.get(code);
         if (set == null) set = Collections.emptySet();
         for (int i = 1; i <= r.boxes; i++) {
             if (!set.contains(i)) {
-                out.add("U" + String.format(Locale.ROOT, "%03d", i));
+                String id = r.expectedBarcode(i);
+                out.add(id.isEmpty() ? String.valueOf(i) : id);
                 if (limit > 0 && out.size() >= limit) break;
             }
         }
