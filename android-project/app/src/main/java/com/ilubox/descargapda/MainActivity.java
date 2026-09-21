@@ -545,92 +545,56 @@ public class MainActivity extends ComponentActivity {
 
     private void showSetup() {
         inSupervisor = true;
+        setupMode = "TRASLADO"; // V0.16: una sola estrategia operativa visible.
         LinearLayout r = root();
+
         TextView title = tv("PREPARAR DESCARGA", rsp(25, 20), C_DARK, true);
-        title.setSingleLine(true);
-        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setGravity(Gravity.CENTER);
         r.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(42, 34)));
-        r.addView(spacer(compactPda() ? 4 : 10));
 
         int boxes = 0;
-        double cbm = 0;
-        for (com.ilubox.descargapda.core.CodeRecord c : pendingManifest.records) { boxes += c.boxes; cbm += c.cbm; }
-        String summary = pendingManifest.containerId + "\n" + pendingManifest.records.size() + " códigos · " + boxes + " cajas · " + String.format(Locale.getDefault(), "%.1f m³", cbm);
-        TextView info = tv(summary, rsp(18, 14), C_DARK, true);
-        info.setPadding(dp(compactPda() ? 8 : 12), dp(compactPda() ? 6 : 12), dp(compactPda() ? 8 : 12), dp(compactPda() ? 6 : 12));
+        for (com.ilubox.descargapda.core.CodeRecord record : pendingManifest.records) boxes += record.boxes;
+        TextView info = tv(pendingManifest.containerId + "\n" + boxes + " cajas · "
+                + pendingManifest.records.size() + " códigos", rsp(18, 14), C_DARK, true);
+        info.setGravity(Gravity.CENTER);
+        info.setPadding(dp(8), dp(7), dp(8), dp(7));
         info.setBackground(box(Color.WHITE, C_BORDER, 12));
         r.addView(info);
-        r.addView(spacer(compactPda() ? 7 : 18));
+        r.addView(spacer(8));
 
-        TextView help = tv("TRASLADO".equals(setupMode)
-                ? "TRASLADO DIRIGIDO: escanea, marca el número de tarima final y agrupa el viaje. Los códigos grandes van directo."
-                : ("BUFFER".equals(setupMode)
-                ? "BUFFER MODULAR: cada tarima buffer se divide en 4 sectores (A-D), un código por sector."
-                : (compactPda()
-                    ? "Posiciones definitivas disponibles al iniciar · máximo 10 por lado."
-                    : "Selecciona únicamente las posiciones definitivas físicamente disponibles al iniciar. Máximo 10 por lado.")),
-                rsp(16, 12), C_GRAY, false);
+        TextView plan = tv(transferPlanSummary(), rsp(14, 11), C_DARK, true);
+        plan.setTag("transferPlan");
+        plan.setPadding(dp(8), dp(7), dp(8), dp(7));
+        plan.setBackground(box(C_LIGHT_GREEN, C_GREEN, 10));
+        r.addView(plan);
+        r.addView(spacer(9));
+
+        TextView help = tv("Indique solo las posiciones físicamente disponibles al pie del contenedor. "
+                + "Durante la descarga la PDA decidirá el resto.", rsp(14, 11), C_GRAY, false);
+        help.setGravity(Gravity.CENTER);
         r.addView(help);
-        r.addView(spacer(compactPda() ? 6 : 12));
-
-        TextView modeLabel = tv("ESTRATEGIA DE DESCARGA", rsp(14, 11), C_DARK, true);
-        modeLabel.setGravity(Gravity.CENTER);
-        r.addView(modeLabel);
-        r.addView(spacer(compactPda() ? 3 : 6));
-        r.addView(modeControl());
-        r.addView(spacer(compactPda() ? 7 : 12));
-
-        if ("BUFFER".equals(setupMode)) {
-            TextView plan = tv(bufferPlanSummary(), rsp(14, 11), C_DARK, true);
-            plan.setPadding(dp(8), dp(6), dp(8), dp(6));
-            plan.setBackground(box(C_LIGHT_GREEN, C_GREEN, 10));
-            r.addView(plan);
-            r.addView(spacer(compactPda() ? 6 : 10));
-            r.addView(bufferNumberControl());
-            r.addView(spacer(compactPda() ? 6 : 10));
-        }
-
-        if ("TRASLADO".equals(setupMode)) {
-            TextView plan = tv(transferPlanSummary(), rsp(15, 11), C_DARK, true);
-            plan.setTag("transferPlan");
-            plan.setPadding(dp(9), dp(7), dp(9), dp(7));
-            plan.setBackground(box(C_LIGHT_GREEN, C_GREEN, 10));
-            r.addView(plan);
-            r.addView(spacer(compactPda() ? 7 : 12));
-        }
-
-        TextView definitiveLabel = tv("TRASLADO".equals(setupMode)
-                ? "DEFINITIVAS EN BLANCO AL PIE" : "POSICIONES DEFINITIVAS INICIALES",
-                rsp(14, 11), C_DARK, true);
-        definitiveLabel.setGravity(Gravity.CENTER);
-        r.addView(definitiveLabel);
-        r.addView(spacer(4));
+        r.addView(spacer(7));
 
         TextView leftValue = tv("", rsp(32, 24), C_DARK, true);
         TextView rightValue = tv("", rsp(32, 24), C_DARK, true);
         r.addView(numberControl("IZQUIERDA", leftValue, true));
-        r.addView(spacer(compactPda() ? 5 : 10));
+        r.addView(spacer(5));
         r.addView(numberControl("DERECHA", rightValue, false));
         updateSetupValues(leftValue, rightValue);
 
-        r.addView(spacer(compactPda() ? 9 : 22));
-        Button start = button("▶  INICIAR DESCARGA", C_GREEN, Color.WHITE);
+        r.addView(spacer(10));
+        Button start = button("▶  INICIAR", C_GREEN, Color.WHITE);
         start.setOnClickListener(v -> {
-            UnloadEngine preview = "TRASLADO".equals(setupMode) ? pendingTransferPlanner() : null;
-            if (setupLeft + setupRight <= 0 && (preview == null || preview.directCodeCount() > 0)) {
-                Toast.makeText(this, "Habilita al menos una posición para las definitivas directas", Toast.LENGTH_SHORT).show();
+            UnloadEngine preview = pendingTransferPlanner();
+            if (setupLeft + setupRight <= 0 && preview.directCodeCount() > 0) {
+                Toast.makeText(this, "Habilita al menos una posición al pie", Toast.LENGTH_SHORT).show();
                 return;
             }
-            UnloadEngine candidate = new UnloadEngine(pendingManifest.containerId, pendingManifest.records, pendingManifest.settings,
-                    setupLeft, setupRight, setupMode, setupBufferPallets);
-            if ("TRASLADO".equals(setupMode)) applyManifestTransferPlan(candidate, pendingManifest);
+            UnloadEngine candidate = new UnloadEngine(pendingManifest.containerId, pendingManifest.records,
+                    pendingManifest.settings, setupLeft, setupRight, "TRASLADO", setupBufferPallets);
+            applyManifestTransferPlan(candidate, pendingManifest);
             try {
-                db.startNewSession(candidate, "Descarga iniciada · modo=" + setupMode
-                        + " · I=" + setupLeft + " D=" + setupRight
-                        + ("BUFFER".equals(setupMode) ? " · Buffer=" + setupBufferPallets + "×4 sectores" : "")
-                        + ("TRASLADO".equals(setupMode) ? " · Plan=" + candidate.plannedFinalPalletCount()
-                                + " definitivas · tendido=" + candidate.plannedTendidoPalletCount()
-                                + " · pie=" + candidate.initialDirectFootPalletCount() + "+TR" : ""));
+                db.startNewSession(candidate, "Descarga iniciada · SIMPLE V0.16 · I=" + setupLeft + " D=" + setupRight);
                 engine = candidate;
                 storageBlocked = false;
                 lastPosition = "";
@@ -640,13 +604,11 @@ public class MainActivity extends ComponentActivity {
                 Toast.makeText(this, "Error guardando descarga: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
-        r.addView(start, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(64, 50)));
+        r.addView(start, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(62, 50)));
 
-        r.addView(spacer(compactPda() ? 5 : 10));
         Button back = button("Cancelar", Color.WHITE, C_GRAY);
-        back.setBackground(box(Color.WHITE, C_BORDER, 10));
-        back.setOnClickListener(v -> { pendingManifest = null; if (engine != null) showSupervisor(); else showHome(); });
-        r.addView(back, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(50, 38)));
+        back.setOnClickListener(v -> { pendingManifest = null; if (engine != null) showSimpleTransferSupervisor(); else showHome(); });
+        r.addView(back, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(46, 36)));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -782,14 +744,12 @@ public class MainActivity extends ComponentActivity {
                 new LinearLayout.LayoutParams(0, rh(48, 38), 1f));
         Button control = button(pallets ? "ESCANEAR" : "CONTROL", Color.WHITE, C_DARK);
         control.setOnClickListener(v -> { if (pallets) showContinuousOperator(); else showSimpleTransferSupervisor(); });
-        header.addView(control, new LinearLayout.LayoutParams(dp(102), rh(42, 36)));
+        header.addView(control, new LinearLayout.LayoutParams(dp(96), rh(42, 36)));
         screen.addView(header);
-        addSyncBar(screen);
-        progressText = tv("", rsp(18, 15), C_DARK, true);
+
+        progressText = tv("", rsp(17, 14), C_DARK, true);
         progressText.setGravity(Gravity.CENTER);
-        int[] progress = engine.progress();
-        progressText.setText("Contenedor: " + progress[0] + " / " + progress[1] + " cajas");
-        screen.addView(progressText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(36, 30)));
+        screen.addView(progressText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(34, 28)));
     }
 
     private void showContinuousOperator() {
@@ -798,22 +758,21 @@ public class MainActivity extends ComponentActivity {
         inPalletView = false;
         mapGrid = null;
         activePositionButton = null;
+        pressureText = null;
+        pendingReadyBox = null;
+        recentText = null;
+        changeTransferButton = null;
+
         LinearLayout screen = root();
         operatorHeader(screen, false);
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        scroll.addView(content);
-        screen.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         scanInput = new EditText(this);
         scanInput.setSingleLine(true);
-        scanInput.setTextSize(rsp(20, 17));
-        scanInput.setHint(storageBlocked ? "CAPTURA BLOQUEADA: REVISAR GUARDADO" : "ESCANEAR CAJA");
+        scanInput.setTextSize(rsp(21, 17));
+        scanInput.setHint(storageBlocked ? "CAPTURA BLOQUEADA" : "ESCANEAR CAJA");
         scanInput.setEnabled(!storageBlocked && !db.isServerSealed());
         scanInput.setGravity(Gravity.CENTER);
-        scanInput.setBackground(box(Color.WHITE, C_BLUE, 10));
+        scanInput.setBackground(box(Color.WHITE, C_BLUE, 12));
         scanInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
         scanInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         scanInput.setShowSoftInputOnFocus(false);
@@ -826,50 +785,59 @@ public class MainActivity extends ComponentActivity {
             if (actionId == EditorInfo.IME_ACTION_DONE && event == null) { processScan(); return true; }
             return false;
         });
-        content.addView(scanInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(56, 46)));
-        content.addView(spacer(5));
+        screen.addView(scanInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rh(58, 48)));
+        screen.addView(spacer(6));
 
         LinearLayout resultBox = new LinearLayout(this);
         resultBox.setOrientation(LinearLayout.VERTICAL);
         resultBox.setGravity(Gravity.CENTER);
-        resultBox.setPadding(dp(6), dp(8), dp(6), dp(8));
+        resultBox.setPadding(dp(8), dp(14), dp(8), dp(14));
         resultBox.setTag("resultBox");
-        resultBox.setBackground(box(C_LIGHT_BLUE, C_BLUE, 12));
-        positionResult = tv("LISTA", rsp(54, 40), C_BLUE, true);
-        statusResult = tv("ESCANEE UNA CAJA", rsp(19, 15), C_DARK, true);
-        codeResult = tv("", rsp(15, 12), C_GRAY, false);
-        countResult = tv("", rsp(20, 16), C_DARK, true);
+        resultBox.setBackground(box(C_LIGHT_BLUE, C_BLUE, 14));
+
+        positionResult = tv("LISTA", rsp(62, 44), C_BLUE, true);
+        statusResult = tv("ESCANEE UNA CAJA", rsp(20, 15), C_DARK, true);
+        codeResult = tv("", rsp(14, 11), C_GRAY, false);
+        countResult = tv("", rsp(18, 14), C_DARK, true);
         for (TextView field : new TextView[]{positionResult, statusResult, codeResult, countResult}) {
             field.setGravity(Gravity.CENTER);
             resultBox.addView(field);
         }
-        // Altura por contenido: nunca recortar las instrucciones en una Q9 estrecha.
-        content.addView(resultBox);
-        if (!lastPosition.isEmpty() && engine.palletScannedCount(lastPosition) > 0) {
-            positionResult.setText(lastPosition);
-            statusResult.setText("DESTINO DE LA ÚLTIMA LECTURA");
-            countResult.setText("Tarima: " + engine.palletScannedCount(lastPosition) + " / "
-                    + engine.expectedForPallet(lastPosition) + " previstas");
-        }
-        pressureText = tv("", rsp(16, 13), C_BLUE, true);
-        pressureText.setGravity(Gravity.CENTER);
-        pressureText.setPadding(0, dp(6), 0, dp(6));
-        content.addView(pressureText);
-        pendingReadyBox = new LinearLayout(this);
-        pendingReadyBox.setOrientation(LinearLayout.VERTICAL);
-        content.addView(pendingReadyBox);
-        recentText = tv("", rsp(12, 10), C_GRAY, false);
-        recentText.setPadding(dp(4), dp(8), dp(4), dp(8));
-        content.addView(recentText);
-        LinearLayout fixedActions = new LinearLayout(this);
-        fixedActions.setPadding(0, dp(4), 0, 0);
-        Button pallets = button("TARIMAS", Color.WHITE, C_BLUE);
-        pallets.setOnClickListener(v -> showOperatorPallets());
-        changeTransferButton = button("CAMBIAR TR", C_BLUE, Color.WHITE);
-        changeTransferButton.setOnClickListener(v -> performContextAction());
-        fixedActions.addView(pallets, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
-        fixedActions.addView(changeTransferButton, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
-        screen.addView(fixedActions);
+        screen.addView(resultBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        TextView hint = tv("Escanee → coloque → siguiente caja. Solo use los botones si ocurre una excepción física.",
+                rsp(12, 10), C_GRAY, false);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(dp(3), dp(5), dp(3), dp(5));
+        screen.addView(hint);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER);
+        Button noFit = button("NO CABE", C_ORANGE, Color.WHITE);
+        noFit.setOnClickListener(v -> {
+            String pallet = lastPosition;
+            if (pallet == null || pallet.isEmpty() || engine.palletScannedCount(pallet) <= 0) {
+                Toast.makeText(this, "Primero escanee una caja de la tarima afectada", Toast.LENGTH_SHORT).show();
+                focusScanner();
+                return;
+            }
+            if (engine.isPalletReadyForVerification(pallet)) {
+                Toast.makeText(this, pallet + " ya está lista; avise al supervisor", Toast.LENGTH_SHORT).show();
+                focusScanner();
+                return;
+            }
+            showPartialClosure(pallet);
+        });
+        Button changeTr = button("CAMBIAR TR", C_BLUE, Color.WHITE);
+        changeTr.setOnClickListener(v -> changeTransfer());
+        Button incident = button("INCIDENCIA", Color.WHITE, C_RED);
+        incident.setBackground(box(Color.WHITE, C_RED, 10));
+        incident.setOnClickListener(v -> showOperatorIncidentDialog());
+        actions.addView(noFit, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
+        actions.addView(changeTr, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
+        actions.addView(incident, new LinearLayout.LayoutParams(0, rh(54, 46), 1f));
+        screen.addView(actions);
+
         setContentView(screen);
         refreshOperator();
         focusScanner();
@@ -1181,16 +1149,25 @@ public class MainActivity extends ComponentActivity {
         if (resultBox != null) resultBox.setBackground(box(fill, border, 14));
 
         if (x.ok) {
-            positionResult.setText(engine.isManualMode() && x.finalPallet != null && !x.finalPallet.isEmpty()
-                    ? x.finalPallet + " · " + x.physicalPosition : x.position);
+            if (engine.isTransferMode()) {
+                boolean direct = x.directToFinal;
+                String actionDestination = direct ? x.physicalPosition : x.transferPallet;
+                positionResult.setText(actionDestination == null || actionDestination.isEmpty() ? x.position : actionDestination);
+                statusResult.setText(direct
+                        ? "COLOCAR AQUÍ · " + x.finalPallet
+                        : "COLOCAR EN TRASLADO · MARCAR " + x.finalPallet);
+                codeResult.setText((x.normalizedBarcode == null || x.normalizedBarcode.isEmpty()) ? x.code : x.normalizedBarcode);
+                countResult.setText("Código: " + x.received + " / " + x.expected);
+            } else {
+                positionResult.setText(engine.isManualMode() && x.finalPallet != null && !x.finalPallet.isEmpty()
+                        ? x.finalPallet + " · " + x.physicalPosition : x.position);
+                statusResult.setText(x.message);
+                codeResult.setText((x.normalizedBarcode == null || x.normalizedBarcode.isEmpty()) ? x.code : x.normalizedBarcode);
+                countResult.setText(engine.isManualMode() && x.finalPallet != null && !x.finalPallet.isEmpty()
+                        ? "Tarima: " + engine.palletScannedCount(x.finalPallet) + " cajas"
+                        : x.received + " / " + x.expected);
+            }
             positionResult.setTextColor(main);
-            statusResult.setText(x.message);
-            codeResult.setText((x.normalizedBarcode == null || x.normalizedBarcode.isEmpty()) ? x.code : x.normalizedBarcode);
-            countResult.setText(engine.isManualMode() && x.finalPallet != null && !x.finalPallet.isEmpty()
-                    ? "Tarima: " + engine.palletScannedCount(x.finalPallet) + " cajas"
-                    : engine.isTransferMode()
-                    ? "Tarima: " + engine.palletScannedCount(x.finalPallet) + " / " + engine.expectedForPallet(x.finalPallet) + " previstas"
-                    : x.received + " / " + x.expected);
         } else if ("DUPLICADA".equals(x.status)) {
             // La posición original es la información más útil si el operador olvidó dónde colocarla.
             positionResult.setText(x.position == null || x.position.isEmpty() ? "⛔" : x.position);
@@ -1243,39 +1220,25 @@ public class MainActivity extends ComponentActivity {
     private void refreshOperator() {
         if (engine == null) return;
         int[] pg = engine.progress();
-        Pressure pr = engine.pressure();
-        if (progressText != null) progressText.setText((engine.isTransferMode() ? "Contenedor: " : "") + pg[0] + " / " + pg[1] + " cajas");
-        if (pressureText != null) {
-            if (engine.isTransferMode()) {
-                pressureText.setText(engine.currentTransferPallet() + " · " + engine.currentTransferBoxCount()
-                        + " cajas · pie libre: " + (engine.enabledCount(null) - engine.activeFinalPalletForFootPosition.size()));
-                pressureText.setTextColor(C_BLUE);
-            } else if (engine.isBufferMode()) {
-                int ready = engine.bufferReadyCandidates().size();
-                pressureText.setText("BUFFER " + engine.bufferOccupiedSectors() + "/" + engine.bufferTotalSectors()
-                        + " sectores · " + ready + " listos · definitivas libres " + pr.free);
-                int freeBuffer = engine.bufferFreeSectors();
-                pressureText.setTextColor(freeBuffer <= 1 ? C_RED : (freeBuffer <= 3 ? C_ORANGE : C_GRAY));
-            } else {
-                pressureText.setText(pr.occupied + " ocupadas · " + pr.free + " libres · " + pr.enabled + "/20 habilitadas · presión " + pr.level);
-                pressureText.setTextColor("SATURADA".equals(pr.level) || "ALTA".equals(pr.level) ? C_ORANGE : C_GRAY);
-            }
+        if (progressText != null) {
+            int percent = pg[1] <= 0 ? 0 : (int)Math.round(pg[0] * 100.0 / pg[1]);
+            progressText.setText(pg[0] + " / " + pg[1] + " cajas · " + percent + "%");
         }
+
         if (engine.isManualMode() && activePositionButton != null) {
             String active = engine.getManualActivePosition();
             Position p = engine.findPosition(active);
             String pallet = engine.manualPalletAtPosition(active);
             String detail = "";
-            if (p != null) detail = " · " + p.boxesOnCurrentPallet + " cajas · " + p.reservedCodes.size() + " cód.";
+            if (p != null) detail = " · " + p.boxesOnCurrentPallet + " cajas";
             activePositionButton.setText("ACTIVA · " + (active.isEmpty() ? "SELECCIONAR"
                     : (pallet.isEmpty() ? "NUEVA EN " + active : pallet + " · " + active)) + detail);
         }
-        refreshPendingReady();
-        if (changeTransferButton != null && engine.isTransferMode()) {
-            refreshContextAction();
-        }
-        refreshMap();
-        refreshRecent();
+
+        // En la pantalla simplificada no se muestran mapas, presión, historial ni colas de supervisor.
+        if (pendingReadyBox != null) refreshPendingReady();
+        if (mapGrid != null) refreshMap();
+        if (recentText != null) refreshRecent();
     }
 
     private void refreshContextAction() {
@@ -1840,6 +1803,35 @@ public class MainActivity extends ComponentActivity {
     }
 
     /** V0.15: tablero operativo compacto; los controles críticos permanecen fuera del desplazamiento. */
+    private void showOperatorIncidentDialog() {
+        final String[] types = {"CAJA DAÑADA", "ETIQUETA ILEGIBLE", "OTRA INCIDENCIA"};
+        showOperationDialog(new AlertDialog.Builder(this)
+                .setTitle("Registrar incidencia")
+                .setItems(types, (d, which) -> {
+                    final EditText note = new EditText(this);
+                    note.setHint("Nota breve (opcional)");
+                    note.setSingleLine(false);
+                    AlertDialog dialog = new AlertDialog.Builder(this)
+                            .setTitle(types[which])
+                            .setMessage("No se contabilizará ninguna caja con esta acción.")
+                            .setView(note)
+                            .setNegativeButton("Cancelar", null)
+                            .setPositiveButton("REGISTRAR", (x, y) -> {
+                                try {
+                                    db.insertSystemEvent("INCIDENCIA OPERADOR", types[which],
+                                            note.getText().toString().trim());
+                                    saveQuietly();
+                                    Toast.makeText(this, "Incidencia registrada", Toast.LENGTH_SHORT).show();
+                                } catch (Exception e) {
+                                    Toast.makeText(this, "No se pudo guardar: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                                }
+                                focusScanner();
+                            }).create();
+                    showOperationDialog(dialog);
+                })
+                .setNegativeButton("Volver", null).create());
+    }
+
     private void showSimpleTransferSupervisor() {
         if (engine == null) { showHome(); return; }
         inSupervisor = true;
