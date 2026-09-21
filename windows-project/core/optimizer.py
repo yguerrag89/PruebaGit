@@ -143,8 +143,8 @@ def _box_capacity(record: CodeRecord, settings: Settings) -> int:
 
 
 def _is_direct(record: CodeRecord, settings: Settings) -> bool:
-    """Solo va al pie un código que requiere dos o más tarimas completas."""
-    return record.boxes > _box_capacity(record, settings)
+    """Va al pie si requiere varias tarimas o si su identidad externa no puede anticiparse caja a caja."""
+    return record.dynamic_identity or record.boxes > _box_capacity(record, settings)
 
 
 def _groups_for(record: CodeRecord, unitary_family: bool = False) -> list[_Group]:
@@ -249,7 +249,7 @@ def _to_pallet(groups: list[_Group], pallet_id: str, pallet_type: str, settings:
 
 
 def build_transfer_plan(records: list[CodeRecord], settings: Settings) -> TransferPlan:
-    """Plan global determinista para Windows y la PDA V0.14.
+    """Plan global determinista para Windows y la PDA V0.16.
 
     Objetivo lexicográfico de la heurística: menos tarimas, menos divisiones de
     código, menos diversidad. Los unitarios se aíslan y un código de dos cajas
@@ -301,7 +301,11 @@ def build_transfer_plan(records: list[CodeRecord], settings: Settings) -> Transf
             tendido.append(pallet)
             for allocation in pallet.allocations:
                 for box in allocation.box_numbers:
-                    assignments[f"{allocation.code}U{box:03d}"] = label
+                    record = next(r for r in records if r.code == allocation.code)
+                    barcode = record.box_id(box)
+                    if not barcode:
+                        raise ValueError(f"No se pudo anticipar la identidad de {record.code} caja {box}")
+                    assignments[barcode] = label
             seq += 1
 
     direct: list[Pallet] = []
