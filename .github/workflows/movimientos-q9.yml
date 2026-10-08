@@ -46,6 +46,7 @@ jobs:
             adb install build/smoke-app.apk
             adb install build/smoke-tests.apk
             adb shell am instrument -w com.ilubox.movimientosq9.tests/com.ilubox.movimientosq9.tests.Smoke | tee build/android-smoke.txt
+            adb logcat -d > build/android-logcat.txt
             adb pull /data/user/0/com.ilubox.movimientosq9/files/qa build/qa
             grep -q 'OK ·' build/android-smoke.txt
       - uses: actions/upload-artifact@v4
@@ -55,5 +56,6 @@ jobs:
           path: |
             build/qa
             build/android-smoke.txt
+            build/android-logcat.txt
             build/dex/classes.dex
           retention-days: 14

@@ -13,7 +13,7 @@ def run(*args):subprocess.run([str(a) for a in args],check=True)
 (build/'test-classes').mkdir(exist_ok=True)
 (build/'test-dex').mkdir(exist_ok=True)
 run(bt/'aapt2','link','-o',build/'tests.apk','-I',android,'--manifest',root/'tests/AndroidManifest.xml','-A',root/'tests/assets')
-run(jdk/'bin/javac','-encoding','UTF-8','-source','8','-target','8','-classpath',str(android)+os.pathsep+str(build/'classes.jar'),'-d',build/'test-classes',root/'tests/Smoke.java')
+run(jdk/'bin/javac','-encoding','UTF-8','-source','8','-target','8','-classpath',str(android)+os.pathsep+str(build/'classes.jar'),'-d',build/'test-classes',*sorted((root/'tests').glob('*.java')))
 with zipfile.ZipFile(build/'test-classes.jar','w') as z:
  for f in (build/'test-classes').rglob('*.class'):z.write(f,f.relative_to(build/'test-classes'))
 run(jdk/'bin/java','-cp',bt/'lib/d8.jar','com.android.tools.r8.D8','--min-api','23','--lib',android,'--classpath',build/'classes.jar','--output',build/'test-dex',build/'test-classes.jar')
