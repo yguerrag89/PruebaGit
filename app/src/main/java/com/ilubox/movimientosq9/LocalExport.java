@@ -16,8 +16,11 @@ public final class LocalExport {
     public static String label(String key){switch(key){case "READY":return "En plantilla XLWMS";case "BLOCKED":return "Bloqueadas al escanear";case "REVIEW":return "Requieren revisión";case "PHYSICAL_INCIDENT":return "Movidas físicamente con incidencia";case "ALREADY_TARGET":return "WMS ya muestra el destino";case "CANCELLED":return "Retiradas del lote";default:return "Pendientes de destino";}}
     private static JSONObject first(SQLiteDatabase db,String sql,String... args) throws Exception {try(Cursor c=db.rawQuery(sql,args)){return c.moveToFirst()?LocalStore.row(c):null;}}
     private static void prepare(LocalStore s,JSONObject initial,JSONObject latest) throws Exception {
-        s.db.execSQL("DROP TABLE IF EXISTS temp.export_rows");s.db.execSQL("CREATE TEMP TABLE export_rows(id TEXT PRIMARY KEY,category TEXT,export_reason TEXT,latest_origin TEXT,latest_available TEXT,latest_locked TEXT)");
         SQLiteDatabase validation=new File(s.directory,"revalidation.db").isFile()?SQLiteDatabase.openDatabase(new File(s.directory,"revalidation.db").getPath(),null,SQLiteDatabase.OPEN_READONLY):s.inventory;
+        // Las consultas WAL pueden utilizar conexiones diferentes. La tabla de
+        // preparación debe ser visible para todas, también en Android 6.
+        s.db.beginTransaction();
+        s.db.execSQL("DROP TABLE IF EXISTS export_rows");s.db.execSQL("CREATE TABLE export_rows(id TEXT PRIMARY KEY,category TEXT,export_reason TEXT,latest_origin TEXT,latest_available TEXT,latest_locked TEXT)");
         try(Cursor c=s.db.rawQuery("SELECT r.*,l.destination,l.state AS lot_state FROM records r LEFT JOIN lots l ON l.number=r.lot_number ORDER BY r.rowid",null)){
             while(c.moveToNext()){
                 JSONObject r=LocalStore.row(c);String status=r.getString("status"),category=status,reason=r.optString("reason"),origin="",available="",locked="";
@@ -37,7 +40,8 @@ public final class LocalExport {
                 if(!Arrays.asList("READY","BLOCKED","REVIEW","PHYSICAL_INCIDENT","ALREADY_TARGET","CANCELLED").contains(category))throw new IOException("Un registro tiene estado inválido. Conservamos la captura sin generar.");
                 s.db.execSQL("INSERT INTO export_rows VALUES(?,?,?,?,?,?)",new Object[]{r.getString("id"),category,reason,origin,available,locked});
             }
-        }finally{if(validation!=s.inventory)validation.close();}
+            s.db.setTransactionSuccessful();
+        }finally{s.db.endTransaction();if(validation!=s.inventory)validation.close();}
     }
     private static Xlsx.Sheet details(LocalStore s,String title,String categories,String cut){
         return new Xlsx.Sheet(title,DETAIL,sink->{try(Cursor c=s.db.rawQuery("SELECT r.*,l.destination,x.category,x.export_reason,x.latest_origin,x.latest_available,x.latest_locked FROM records r JOIN export_rows x ON x.id=r.id LEFT JOIN lots l ON l.number=r.lot_number WHERE "+categories+" ORDER BY r.rowid",null)){while(c.moveToNext()){
@@ -83,7 +87,7 @@ public final class LocalExport {
                 JSONObject hashes=new JSONObject();File[] files=stage.listFiles();if(files==null)throw new IOException("No se pudieron preparar los archivos.");for(File f:files)hashes.put(f.getName(),OfflineOperations.sha(f));
                 JSONObject manifest=new JSONObject().put("app_version","0.3.0").put("operation_id",opid).put("name",opname).put("demo",initial.optInt("demo")==1).put("generated_at",stamp).put("inventory",initial).put("validation_inventory",latest).put("counts",counts).put("event_sha256",OfflineOperations.eventHash(s)).put("files",hashes);
                 NativeClient.write(new File(stage,"Trazabilidad.json"),manifest);File temporary=new File(output+".part");OfflineOperations.zipDirectory(stage,temporary);if(!temporary.renameTo(output))throw new IOException("No se pudo guardar el paquete final. Revisa espacio disponible.");record(s,output,counts);return output;
-            }finally{OfflineOperations.deleteTree(stage);}
+            }finally{OfflineOperations.deleteTree(stage);s.db.execSQL("DROP TABLE IF EXISTS export_rows");}
         }
     }
     private static void record(LocalStore s,File output,JSONObject counts) throws Exception {s.db.beginTransaction();try{s.setting("export_path",output.getName());s.setting("export_sha256",OfflineOperations.sha(output));s.setting("export_counts",counts.toString());s.db.setTransactionSuccessful();}finally{s.db.endTransaction();}}
