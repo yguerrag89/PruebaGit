@@ -20,6 +20,7 @@ public final class LocalStore implements AutoCloseable {
 
     public LocalStore(File directory) throws Exception {
         this.directory = directory;
+        if(!new File(directory,"inventory.db").isFile())throw new IllegalArgumentException("Falta el inventario de esta operación. Restaura su respaldo completo.");
         db = SQLiteDatabase.openOrCreateDatabase(new File(directory, "capture.db"), null);
         db.enableWriteAheadLogging();
         db.execSQL("PRAGMA synchronous=FULL");
@@ -27,10 +28,13 @@ public final class LocalStore implements AutoCloseable {
         db.execSQL("CREATE TABLE IF NOT EXISTS lots(number INTEGER PRIMARY KEY,state TEXT,destination TEXT DEFAULT '',raw TEXT DEFAULT '',created_at TEXT,closed_at TEXT DEFAULT '')");
         db.execSQL("CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY,identity_key TEXT UNIQUE,barcode TEXT,raw_scan TEXT,status TEXT,reason TEXT,box_type TEXT,customer_code TEXT,origin TEXT,total TEXT,available TEXT,locked TEXT,lot_number INTEGER,actual_location TEXT DEFAULT '',note TEXT DEFAULT '',first_seen TEXT,last_seen TEXT,attempts INTEGER DEFAULT 1)");
         db.execSQL("CREATE INDEX IF NOT EXISTS record_barcode ON records(barcode)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS record_lot ON records(lot_number,status)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS record_status ON records(status)");
         db.execSQL("CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY,event_id TEXT UNIQUE,kind TEXT,payload TEXT,occurred_at TEXT,acked INTEGER DEFAULT 0)");
         if (scalar("SELECT COUNT(*) FROM lots", null) == 0) db.execSQL("INSERT INTO lots(number,state,created_at) VALUES(1,'OPEN',?)", new Object[]{utc()});
-        inventory = SQLiteDatabase.openDatabase(new File(directory, "inventory.db").getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY);
-        if (!"2".equals(inventoryValue("protocol"))) throw new IllegalArgumentException("Inventario incompatible con esta APK.");
+        try {inventory = SQLiteDatabase.openDatabase(new File(directory, "inventory.db").getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY);
+            if (!"2".equals(inventoryValue("protocol"))) {inventory.close();throw new IllegalArgumentException("Inventario incompatible con esta APK.");}
+        }catch(Exception e){db.close();throw e;}
     }
     public static String utc() {
         SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT);
@@ -59,7 +63,7 @@ public final class LocalStore implements AutoCloseable {
     }
     public synchronized void setting(String key,String value) { db.execSQL("INSERT OR REPLACE INTO settings VALUES(?,?)",new Object[]{key,value}); }
     public synchronized boolean sealed() { return "1".equals(setting("sealed")); }
-    private void open() { if(sealed()) throw new IllegalStateException("La captura está finalizada. Sincroniza y genera las plantillas."); }
+    private void open() { if(sealed()) throw new IllegalStateException("La captura está finalizada. Genera y guarda las plantillas."); }
     private int lot() { return scalar("SELECT number FROM lots WHERE state='OPEN'",null); }
     public synchronized int pending() { return scalar("SELECT COUNT(*) FROM events WHERE acked=0", null); }
     public synchronized int lotCount() { return scalar("SELECT COUNT(*) FROM records WHERE status='ACCEPTED' AND lot_number=?",new String[]{String.valueOf(lot())}); }
@@ -94,7 +98,7 @@ public final class LocalStore implements AutoCloseable {
                 if(existing==null){v.put("first_seen",stamp);db.insertOrThrow("records",null,v);}
                 else {v.put("attempts",existing.getInt("attempts")+1);db.update("records",v,"id=?",new String[]{id});}
             }
-            event("SCAN",new JSONObject().put("code",raw).put("record_id",id).put("result",status),stamp);
+            event("SCAN",new JSONObject().put("code",raw).put("record_id",id).put("result",status).put("reason",reason),stamp);
             db.setTransactionSuccessful();
         } finally {db.endTransaction();}
         JSONObject rec=first("SELECT r.*,l.destination,l.state AS lot_state FROM records r LEFT JOIN lots l ON l.number=r.lot_number WHERE r.id=?",id);

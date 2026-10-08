@@ -1,7 +1,7 @@
-name: Verificar APK nativa Movimientos Q9
+name: Verificar Movimientos Q9 independiente
 on:
   push:
-    branches: [movimientos-q9-nativa-v0-2]
+    branches: [movimientos-q9-independiente-v0-3]
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools'
-      - name: SDK y compilación real
+      - name: Compilar APK y prueba
         run: |
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0' >/dev/null
           export Q9_JAVA="$JAVA_HOME"
@@ -29,17 +29,16 @@ jobs:
           keytool -genkeypair -keystore build/qa.p12 -storepass androidtest -keypass androidtest -alias qa -keyalg RSA -keysize 2048 -validity 365 -dname 'CN=Q9 QA' -noprompt
           java -jar "$Q9_BUILD_TOOLS/lib/apksigner.jar" sign --ks build/qa.p12 --ks-pass pass:androidtest --out build/smoke-app.apk build/aligned.apk
           java -jar "$Q9_BUILD_TOOLS/lib/apksigner.jar" sign --ks build/qa.p12 --ks-pass pass:androidtest --out build/smoke-tests.apk build/tests-aligned.apk
-      - name: Permitir aceleración del emulador
-        run: |
-          sudo chmod 666 /dev/kvm
-      - name: Probar en Android 6 con resolución Q9
+      - name: Aceleración de emulador
+        run: sudo chmod 666 /dev/kvm
+      - name: Probar Android 6 a resolución Q9
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 23
           target: default
           arch: x86
           profile: Nexus S
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -skin 480x800
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -skin 480x800 -partition-size 2048
           disable-animations: true
           script: |
             adb root
@@ -52,7 +51,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Q9_Android_23_verificacion
+          name: Q9_independiente_Android_23
           path: |
             build/qa
             build/android-smoke.txt

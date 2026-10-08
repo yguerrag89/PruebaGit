@@ -36,7 +36,8 @@ def main():
     run(bt / 'aapt2', 'compile', '--dir', src / 'res', '-o', build / 'resources')
     res = sorted((build / 'resources').glob('*.flat'))
     apk = build / 'unsigned.apk'
-    run(bt / 'aapt2', 'link', '-o', apk, '-I', android, '--manifest', src / 'AndroidManifest.xml', '--java', build / 'generated', *res)
+    asset_flags = ['-A', src / 'assets'] if (src / 'assets').exists() else []
+    run(bt / 'aapt2', 'link', '-o', apk, '-I', android, '--manifest', src / 'AndroidManifest.xml', '--java', build / 'generated', *asset_flags, *res)
     sources = sorted((src / 'java').rglob('*.java')) + sorted((build / 'generated').rglob('*.java'))
     run(jdk / 'bin/javac', '-encoding', 'UTF-8', '-source', '8', '-target', '8', '-classpath', android, '-d', build / 'classes', *sources)
     jar = build / 'classes.jar'
@@ -49,7 +50,7 @@ def main():
             z.write(f, f.name)
     aligned = build / 'aligned.apk'
     run(bt / 'zipalign', '-f', '4', apk, aligned)
-    output = build / 'Movimientos_Q9_nativa_v0_2_0.apk'
+    output = build / 'Movimientos_Q9_independiente_v0_3_0.apk'
     if args.unsigned:
         shutil.copyfile(aligned, output)
     else:

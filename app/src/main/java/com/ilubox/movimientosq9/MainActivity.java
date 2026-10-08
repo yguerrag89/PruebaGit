@@ -38,7 +38,7 @@ public final class MainActivity extends Activity {
     private static final int BLUE=0xff143b50,TEAL=0xff127f86,RED=0xffae2435,GREEN=0xff147a4b,AMBER=0xff946119;
     private final Handler ui=new Handler(Looper.getMainLooper());
     private final ExecutorService captures=Executors.newSingleThreadExecutor();
-    private final ExecutorService network=Executors.newSingleThreadExecutor();
+    private final ExecutorService files=Executors.newSingleThreadExecutor();
     private SharedPreferences prefs;
     private LocalStore local;
     private NativeClient client;
@@ -46,8 +46,8 @@ public final class MainActivity extends Activity {
     private TextView syncText,countsText,lotText,resultTitle,resultBody;
     private EditText scanInput;
     private Button scanButton,lotButton;
-    private boolean captureBusy,networkBusy,destroyed,switching;
-    private String page="scan",lastNetwork="Inventario local",recordFilter="",recordSearch="";
+    private boolean captureBusy,fileBusy,destroyed,switching;
+    private String page="scan",lastStatus="Inventario local",recordFilter="",recordSearch="";
     private int recordOffset=0;
     private JSONObject lastResult;
     private File saveFile;
@@ -61,19 +61,18 @@ public final class MainActivity extends Activity {
             String op=prefs.getString("current_operation","");
             if(op.matches("[a-f0-9]{32}"))loadOperation(new File(getFilesDir(),"operations/"+op));
             render();
-            if(getIntent().getData()!=null)pairScreen(getIntent().getData().toString());
+            if(saved!=null){openKind=saved.getString("open_kind","");String path=saved.getString("save_path","");if(!path.isEmpty()){File candidate=new File(path);if(candidate.isFile()&&(candidate.getCanonicalPath().startsWith(getFilesDir().getCanonicalPath()+"/")||candidate.getCanonicalPath().startsWith(getCacheDir().getCanonicalPath()+"/")))saveFile=candidate;}}
         }catch(Exception e){error(e);setupScreen("");}
     }
-    @Override public void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(intent.getData()!=null)pairScreen(intent.getData().toString());}
     @Override public void onResume(){super.onResume();focusScan();}
-    @Override public void onDestroy(){destroyed=true;captures.shutdown();network.shutdown();super.onDestroy();}
+    @Override public void onDestroy(){destroyed=true;captures.shutdown();files.shutdown();super.onDestroy();}
     @Override public void onBackPressed(){if(page.equals("scan")&&local!=null){new AlertDialog.Builder(this).setMessage("Las lecturas están guardadas. ¿Salir de Movimientos Q9?").setPositiveButton("Salir",(d,w)->finish()).setNegativeButton("Continuar",(d,w)->focusScan()).show();}else{page="scan";render();}}
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private TextView text(String value,int size,int color){TextView v=new TextView(this);v.setText(value);v.setTextSize(size);v.setTextColor(color);v.setPadding(0,dp(4),0,dp(4));return v;}
     private GradientDrawable background(int color){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(9));return d;}
     private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
     private void add(View view){body.addView(view,new LinearLayout.LayoutParams(-1,-2));}
-    private Button button(String name,Task task){Button b=new Button(this);b.setText(name);b.setAllCaps(false);b.setTextSize(15);b.setMinHeight(dp(46));b.setOnClickListener(v->{try{task.run();}catch(Exception e){error(e);}});return b;}
+    private Button button(String name,Task task){Button b=new Button(this);b.setText(name);b.setAllCaps(false);b.setTextSize(15);b.setMinHeight(dp(46));b.setOnClickListener(v->{try{if(fileBusy){toast("Espera a que termine la acción actual.");return;}task.run();}catch(Exception e){error(e);}});return b;}
     private EditText input(String hint,boolean scanner){EditText e=new EditText(this);e.setSingleLine(true);e.setHint(hint);e.setTextSize(19);e.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);e.setImeOptions(EditorInfo.IME_ACTION_DONE);if(scanner)e.setShowSoftInputOnFocus(false);return e;}
     private void enter(EditText field,Task task){
         field.setOnKeyListener((v,key,event)->{if(key!=KeyEvent.KEYCODE_ENTER)return false;if(event.getAction()==KeyEvent.ACTION_DOWN&&event.getRepeatCount()==0){try{task.run();}catch(Exception e){error(e);}}return true;});
@@ -86,7 +85,7 @@ public final class MainActivity extends Activity {
         boolean demo=local!=null&&client!=null&&client.profile.optJSONObject("snapshot")!=null&&client.profile.optJSONObject("snapshot").optInt("demo")==1;
         TextView brand=text(demo?"DEMO · Movimientos Q9":title,19,Color.WHITE);brand.setTypeface(null,Typeface.BOLD);brand.setMaxLines(1);brand.setEllipsize(android.text.TextUtils.TruncateAt.END);bar.addView(brand,new LinearLayout.LayoutParams(0,dp(44),1));
         Button menu=button("⋮",this::menu);menu.setTextSize(24);bar.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(44)));root.addView(bar);
-        syncText=text(lastNetwork,12,BLUE);syncText.setPadding(dp(14),dp(5),dp(14),dp(5));root.addView(syncText);
+        syncText=text(lastStatus,12,BLUE);syncText.setPadding(dp(14),dp(5),dp(14),dp(5));root.addView(syncText);
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);body=column();body.setPadding(dp(14),0,dp(14),dp(12));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         if(local!=null){LinearLayout nav=new LinearLayout(this);String[] pages={"scan","records","end"},labels={"Escanear","Cajas / lotes","Cierre"};for(int i=0;i<pages.length;i++){final String p=pages[i];Button b=button(labels[i],()->{page=p;recordOffset=0;render();});b.setTextSize(13);nav.addView(b,new LinearLayout.LayoutParams(0,dp(52),1));}root.addView(nav);}
         setContentView(root);
@@ -98,61 +97,50 @@ public final class MainActivity extends Activity {
             frame("Movimientos Q9");JSONObject op=client.profile.getJSONObject("operation"),snapshot=client.profile.getJSONObject("snapshot");
             TextView name=text(op.getString("name"),16,BLUE);name.setTypeface(null,Typeface.BOLD);add(name);
             if(snapshot.optInt("demo")==1){TextView demo=text("DEMOSTRACIÓN · No cargar las plantillas al WMS",14,RED);add(demo);}
-            add(text("Corte: "+snapshot.getString("cut_at").replace('T',' ')+" · hora de Windows",12,AMBER));
+            add(text("Corte: "+snapshot.getString("cut_at").replace('T',' ')+" · hora indicada",12,AMBER));
             if(page.equals("scan"))scanScreen();else if(page.equals("records"))recordsScreen();else endScreen();
             updateCounts();focusScan();
         }catch(Exception e){error(e);}
     }
-    private void setupScreen(String qr){
-        page="setup";frame("Preparar Movimientos Q9");add(text("Valida cajas antes de moverlas",22,BLUE));
-        add(text("Carga el inventario una vez. Cada escaneo y lote queda guardado en esta PDA, incluso sin Wi‑Fi.",15,BLUE));
-        add(button("Vincular por QR a Windows",()->pairScreen(qr)));
-        add(button("Importar paquete inicial por USB",()->pick("BOOTSTRAP","application/zip")));
-        if(client!=null&&!new File(client.directory,"inventory.db").isFile())add(button("Reintentar descarga del inventario",()->networkTask("Descargando inventario",()->{client.pair(client.profile.optString("pair_code"),this::progress);openReady();},this::render)));
-        add(button("Operaciones guardadas",this::history));
-        add(text("En Windows: carga BoxInventory, abre una operación y muestra el QR para APK. Con el lector de la Q9, escanéalo dentro de Vincular por QR. Si no hay conexión, copia el paquete inicial ZIP por USB e impórtalo aquí.",14,BLUE));
-        add(text("Movimientos Q9 0.2.0 · Android 6 o posterior · lector teclado + Enter",12,AMBER));
+
+    @Override public void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putString("open_kind",openKind);if(saveFile!=null)state.putString("save_path",saveFile.getPath());}
+    private void setupScreen(String unused){
+        page="setup";frame("Movimientos Q9 independiente");add(text("Inventario y plantillas en la PDA",22,BLUE));
+        add(text("Selecciona el Excel BoxInventory desde la memoria de la PDA o una USB. Cada caja y lote queda guardado aquí.",16,BLUE));
+        add(button("Cargar inventario Excel",()->{canSwitch("");pick("INVENTORY");}));
+        add(button("Iniciar demostración",this::demo));add(button("Operaciones guardadas",this::history));add(button("Restaurar respaldo completo",()->{canSwitch("");pick("RESTORE");}));
+        add(text("Movimientos Q9 0.3.0 · Android 6 o posterior · lector teclado + Enter",12,AMBER));
+        add(text("El inventario es una copia del corte WMS cargado. Las plantillas se generan aquí y quedan pendientes de cargar al WMS.",14,BLUE));
     }
     private boolean canSwitch(String op) throws Exception {
-        if(local==null||NativeClient.opId(client.profile).equals(op))return true;
-        if(!local.sealed()||local.pending()>0)throw new IllegalStateException("Finaliza y entrega la operación actual antes de cambiar. Puedes confirmar una entrega USB importando el comprobante de Windows.");
-        return true;
-    }
-    private void pairScreen(String raw){
-        page="pair";frame("Vincular por QR");add(text("Escanea el QR de Windows aquí",20,BLUE));
-        EditText qr=input("QR de Movimientos Q9",true);qr.setText(raw);add(qr);
-        Task connect=()->pairQr(qr.getText().toString());enter(qr,connect);add(button("Vincular y cargar inventario",connect));
-        add(text("Conecta la Q9 y Windows a la misma red. El QR debe decir «para APK nativa».",14,BLUE));
-        EditText address=input("http://192.168.1.10:8765",false),code=input("Código de vinculación",false),operation=input("Identificador de operación",false);add(address);add(code);add(operation);
-        add(button("Vincular con datos escritos",()->pairDetails(address.getText().toString(),code.getText().toString(),operation.getText().toString())));
-        qr.requestFocus();
-    }
-    private void pairQr(String raw) throws Exception {
-        Uri u=Uri.parse(Rules.clean(raw));if(!"movimientosq9".equals(u.getScheme())||!"pair".equals(u.getHost()))throw new IllegalArgumentException("Usa el QR para APK nativa de Movimientos Q9.");
-        pairDetails(u.getQueryParameter("server"),u.getQueryParameter("code"),u.getQueryParameter("operation_id"));
-    }
-    private void pairDetails(String server,String code,String op) throws Exception {
-        String address=NativeClient.server(server);op=Rules.clean(op);if(!op.matches("[a-f0-9]{32}")||code==null||!code.matches("[A-Za-z0-9_-]{20,100}"))throw new IllegalArgumentException("Revisa el código y el identificador de operación.");
-        canSwitch(op);if(networkBusy||captureBusy)throw new IllegalStateException("Espera a que termine la acción en curso.");
-        File directory=new File(getFilesDir(),"operations/"+op);directory.mkdirs();JSONObject profile;
-        if(new File(directory,"profile.json").isFile())profile=NativeClient.read(new File(directory,"profile.json"));
-        else {String device=prefs.getString("device_id","");if(device.isEmpty()){device=UUID.randomUUID().toString();prefs.edit().putString("device_id",device).commit();}byte[] key=new byte[32];new SecureRandom().nextBytes(key);profile=new JSONObject().put("protocol",2).put("operation_id",op).put("device_id",device).put("token",NativeClient.hex(key));}
-        profile.put("server",address).put("pair_code",code);NativeClient next=new NativeClient(directory,profile);next.save();
-        switching=true;
-        prefs.edit().putString("current_operation",op).commit();
-        networkTask("Vinculando",()->{next.pair(code,this::progress);if(local!=null)local.close();client=next;local=new LocalStore(directory);prefs.edit().putString("current_operation",NativeClient.opId(profile)).commit();lastResult=null;},()->{page="scan";lastNetwork="Inventario listo · lectura local";render();});
+        if(captureBusy||fileBusy)throw new IllegalStateException("Espera a que termine la acción actual.");
+        if(local==null||NativeClient.opId(client.profile).equals(op)||local.stats().getInt("attempts")==0)return true;
+        if(!local.sealed()||local.setting("export_path").isEmpty())throw new IllegalStateException("Finaliza la captura y genera su paquete antes de cambiar de operación. Las lecturas actuales se conservan.");return true;
     }
     private void loadOperation(File directory) throws Exception {
-        client=new NativeClient(directory,NativeClient.read(new File(directory,"profile.json")));
-        if(new File(directory,"inventory.db").isFile())local=new LocalStore(directory);
+        JSONObject profile=NativeClient.read(new File(directory,"profile.json"));LocalStore next=new LocalStore(directory);
+        client=new NativeClient(directory,profile);local=next;
+        lastStatus="Inventario local · guardado automático";
     }
-    private void openReady() throws Exception {if(local!=null)local.close();local=new LocalStore(client.directory);prefs.edit().putString("current_operation",NativeClient.opId(client.profile)).commit();page="scan";}
+    private void activate(File directory) throws Exception {
+        JSONObject profile=NativeClient.read(new File(directory,"profile.json"));LocalStore next=new LocalStore(directory);if(local!=null)local.close();client=new NativeClient(directory,profile);local=next;
+        prefs.edit().putString("current_operation",NativeClient.opId(profile)).commit();lastResult=null;page="scan";
+    }
+    private void demo() throws Exception {
+        canSwitch("");fileTask("Preparando demostración",()->{
+            File sample=new File(getCacheDir(),"Inventario_DEMO_Q9.xlsx");
+            String[] h={"Box type No./箱类型号","Customize Barcode/自定义箱条码","Customer/客户","cellNo","Total Stock/总库存","Available stock/可用库存","Locked Inventory/锁定库存"};
+            Xlsx.write(sample,java.util.Collections.singletonList(new Xlsx.Sheet("Inventario",h,sink->{for(int i=1;i<=6;i++)sink.row("DEMO-C"+i,String.format(java.util.Locale.ROOT,"DEMOU%03d",i),"DEMOSTRACION (999999)",i==6?"2A_M16-A001":"2A-TMP0001",1,i==4?0:1,i==4?"1":i==5?"":"0");})));
+            String cut=new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss",java.util.Locale.ROOT).format(new java.util.Date());
+            try(InputStream in=new FileInputStream(sample)){activate(OfflineOperations.start(in,new File(getFilesDir(),"operations"),"Demostración Q9",sample.getName(),cut,true,this::progress));}sample.delete();
+        },()->{lastStatus="Demostración lista · guardado automático";render();new AlertDialog.Builder(this).setTitle("Códigos de prueba").setMessage("DEMOU001: aceptada\nDEMOU004: bloqueada\nDEMOU005: revisar\n\nRack: 2A?M16'A001\nTemporal: 2A'TMP2136\n\nNo cargar las plantillas demo al WMS.").setPositiveButton("Escanear",(d,w)->focusScan()).show();});
+    }
     private void scanScreen() throws Exception {
         countsText=text("",13,BLUE);add(countsText);lotText=text("",17,BLUE);lotText.setTypeface(null,Typeface.BOLD);add(lotText);
         scanInput=input("Escanea código de caja",true);scanInput.setTextSize(23);scanInput.setMinHeight(dp(55));scanInput.setEnabled(!local.sealed());add(scanInput);enter(scanInput,this::scan);
         scanButton=button("Validar caja",this::scan);scanButton.setEnabled(!local.sealed());add(scanButton);
         LinearLayout box=column();box.setPadding(dp(12),dp(10),dp(12),dp(10));box.setBackground(background(BLUE));
-        resultTitle=text(local.sealed()?"CAPTURA FINALIZADA":"LISTO PARA ESCANEAR",21,Color.WHITE);resultTitle.setTypeface(null,Typeface.BOLD);resultBody=text(local.sealed()?"Sincroniza y genera las plantillas.":"Espera el resultado antes de mover la caja.",15,Color.WHITE);box.addView(resultTitle);box.addView(resultBody);add(box);
+        resultTitle=text(local.sealed()?"CAPTURA FINALIZADA":"LISTO PARA ESCANEAR",21,Color.WHITE);resultTitle.setTypeface(null,Typeface.BOLD);resultBody=text(local.sealed()?"Genera y guarda las plantillas.":"Espera el resultado antes de mover la caja.",15,Color.WHITE);box.addView(resultTitle);box.addView(resultBody);add(box);
         if(lastResult!=null)showResult(lastResult);
         lotButton=button("Poner ubicación a todo el lote",this::destinationDialog);lotButton.setEnabled(local.lotCount()>0&&!local.sealed());add(lotButton);
         add(button("Ubicación / nota de la última incidencia",()->{if(lastResult==null||!lastResult.getJSONObject("record").getString("status").matches("BLOCKED|REVIEW"))throw new IllegalStateException("Escanea una caja bloqueada o abre su ficha en Cajas / lotes.");recordDialog(lastResult.getJSONObject("record"));}));
@@ -173,7 +161,7 @@ public final class MainActivity extends Activity {
         detail+=status.equals("ACCEPTED")?"Guardada en el lote. Puedes moverla.":status.equals("BLOCKED")?"Sepárala. No se puede mover en WMS.":status.equals("DUPLICATE")?"Ya está registrada. Evita moverla otra vez.":result.optString("reason")+". Sepárala para revisión.";
         if(r!=null&&!r.optString("origin").isEmpty())detail+="\nOrigen WMS: "+r.optString("origin");resultBody.setText(detail);
     }
-    private void updateCounts(){try{if(local==null)return;JSONObject s=local.stats();if(countsText!=null)countsText.setText("Aceptadas: "+s.getInt("ACCEPTED")+" · Bloqueadas: "+s.getInt("BLOCKED")+" · Revisar: "+s.getInt("REVIEW"));if(lotText!=null)lotText.setText("Lote "+s.getInt("lot_number")+" · "+s.getInt("lot_count")+(s.getInt("lot_count")==1?" caja sin destino":" cajas sin destino"));if(lotButton!=null)lotButton.setEnabled(s.getInt("lot_count")>0&&!local.sealed());if(syncText!=null&&!networkBusy)syncText.setText(s.getInt("pending")+(s.getInt("pending")==1?" acción por entregar · ":" acciones por entregar · ")+(s.optString("last_sync").isEmpty()?"inventario local":"última entrega "+s.getString("last_sync")));}catch(Exception e){error(e);}}
+    private void updateCounts(){try{if(local==null)return;JSONObject s=local.stats();if(countsText!=null)countsText.setText("Aceptadas: "+s.getInt("ACCEPTED")+" · Bloqueadas: "+s.getInt("BLOCKED")+" · Revisar: "+s.getInt("REVIEW"));if(lotText!=null)lotText.setText("Lote "+s.getInt("lot_number")+" · "+s.getInt("lot_count")+(s.getInt("lot_count")==1?" caja sin destino":" cajas sin destino"));if(lotButton!=null)lotButton.setEnabled(s.getInt("lot_count")>0&&!local.sealed());if(syncText!=null&&!fileBusy)syncText.setText(local.setting("export_path").isEmpty()?"Guardado automático · inventario local":"Paquete final guardado · pendiente de cargar al WMS");}catch(Exception e){error(e);}}
     private void focusScan(){if(scanInput!=null&&!captureBusy&&!local.sealed())scanInput.post(()->{if(scanInput!=null)scanInput.requestFocus();});}
     private void destinationDialog() throws Exception {
         if(captureBusy)throw new IllegalStateException("Espera a que se guarde la lectura.");if(local.lotCount()==0)throw new IllegalStateException("El lote no tiene cajas aceptadas.");
@@ -214,65 +202,58 @@ public final class MainActivity extends Activity {
         AlertDialog.Builder builder=new AlertDialog.Builder(this).setTitle(r.getString("barcode")).setView(content).setNegativeButton("Cerrar",(d,w)->focusScan());if(editable)builder.setPositiveButton(action,null);AlertDialog dialog=builder.create();
         if(editable)dialog.setOnShowListener(v->dialog.getButton(-1).setOnClickListener(b->{try{if(issue)local.incident(r.getString("id"),location.getText().toString(),note.getText().toString());else local.cancel(r.getString("id"),note.getText().toString());dialog.dismiss();lastResult=null;render();toast("Cambio guardado en la PDA.");}catch(Exception e){error(e);}}));dialog.show();
     }
+
     private void endScreen() throws Exception {
-        JSONObject s=local.stats();add(text(s.getInt("ACCEPTED")+" cajas aceptadas\n"+s.getInt("BLOCKED")+" bloqueadas\n"+s.getInt("REVIEW")+" para revisión\n"+s.getInt("pending")+" acciones pendientes de entrega",18,BLUE));
-        add(button("Sincronizar con Windows",this::sync));
+        JSONObject s=local.stats();add(text(s.getInt("ACCEPTED")+" cajas aceptadas\n"+s.getInt("BLOCKED")+" bloqueadas\n"+s.getInt("REVIEW")+" para revisión",18,BLUE));
         if(!local.sealed())add(button("Finalizar captura",this::sealDialog));
-        else {add(text("Captura finalizada. Todas las cajas aceptadas tienen destino físico.",15,GREEN));add(button("Generar plantillas y reporte",this::generate));}
-        add(text("Las plantillas se crean en Windows, revalidando con su inventario más reciente. La generación deja los movimientos pendientes de cargar al WMS.",14,BLUE));
-        add(button("Guardar respaldo para entregar por USB",this::backup));
-        add(button("Importar comprobante de entrega USB",()->pick("RECEIPT","application/json")));
-        String serverInfo=local.setting("server_info");if(!serverInfo.isEmpty()){JSONObject info=new JSONObject(serverInfo);JSONObject latest=info.optJSONObject("current_snapshot");if(latest!=null&&latest.optLong("id")!=client.profile.getJSONObject("snapshot").getLong("id"))add(text("Windows tiene un corte más reciente. Esta captura conserva el inventario inicial; las diferencias quedarán en la conciliación.",14,AMBER));}
-        File packet=new File(client.directory,"Movimientos_"+NativeClient.opId(client.profile).substring(0,8)+".zip");if(packet.isFile())add(button("Guardar ZIP de plantillas en el equipo",()->save(packet,"application/zip")));
+        else {
+            add(text("Captura finalizada. Todas las cajas aceptadas tienen destino físico.",15,GREEN));
+            if(local.setting("export_path").isEmpty()){
+                add(button("Revalidar con otro BoxInventory · opcional",()->pick("REVALIDATE")));
+                JSONObject validation=OfflineOperations.validationSnapshot(local);add(text("Corte para generar: "+validation.getString("cut_at").replace('T',' '),14,AMBER));
+                add(button("Generar plantillas y reporte",this::generate));
+            }else {JSONObject counts=new JSONObject(local.setting("export_counts"));add(text(counts.optInt("READY")+" movimientos en plantilla\n"+counts.optInt("PHYSICAL_INCIDENT")+" incidencias físicas",16,BLUE));add(button("Guardar ZIP de plantillas",this::generate));}
+        }
+        add(text("Se genera un ZIP con las plantillas XLWMS y el reporte. Puedes guardarlo en Descargas o en la USB que muestre Android. Generar no aplica los movimientos al WMS.",14,BLUE));
+        add(button("Guardar respaldo completo",this::backup));
     }
     private void sealDialog() throws Exception {
         if(local.lotCount()>0)throw new IllegalStateException("Confirma primero la ubicación de las cajas del lote.");
-        new AlertDialog.Builder(this).setTitle("Finalizar captura").setMessage("Se conservarán cajas, lotes e incidencias. Después de finalizar podrás sincronizar y generar plantillas; la captura de esta operación quedará cerrada.").setPositiveButton("Finalizar",(d,w)->{try{if(captureBusy)throw new IllegalStateException("Espera a que termine la lectura.");local.seal();render();toast("Captura finalizada y guardada. Entrega la bitácora por Wi‑Fi o USB.");}catch(Exception e){error(e);}}).setNegativeButton("Continuar capturando",null).show();
+        new AlertDialog.Builder(this).setTitle("Finalizar captura").setMessage("Se conservarán cajas, lotes e incidencias. Después podrás revalidar con un corte nuevo, generar y guardar las plantillas. La captura de esta operación quedará cerrada.").setPositiveButton("Finalizar",(d,w)->{try{if(captureBusy||fileBusy)throw new IllegalStateException("Espera a que termine la acción actual.");local.seal();render();toast("Captura finalizada. Puedes generar las plantillas aquí.");}catch(Exception e){error(e);}}).setNegativeButton("Continuar capturando",null).show();
     }
-    private void sync() throws Exception {if(local==null)return;networkTask("Sincronizando",()->client.sync(local,this::progress),()->{lastNetwork="Entrega confirmada en Windows";render();toast("Sincronización terminada.");});}
     private void generate() throws Exception {
-        if(!local.sealed())throw new IllegalStateException("Finaliza la captura primero.");
-        networkTask("Generando plantillas",()->{client.sync(local,this::progress);if(local.pending()>0)throw new IllegalStateException("Hay acciones pendientes. Completa la sincronización.");JSONObject export=client.generate(this::progress);local.setting("export",export.toString());saveFile=client.downloadExport(export,this::progress);},()->{render();new AlertDialog.Builder(this).setTitle("Plantillas y reporte guardados").setMessage("El mismo paquete está en Windows. Las cajas bloqueadas e incidencias permanecen en el reporte; quedan fuera de las plantillas. Pendiente de cargar al WMS.").setPositiveButton("Guardar ZIP",(d,w)->{try{save(saveFile,"application/zip");}catch(Exception e){error(e);}}).setNegativeButton("Cerrar",null).show();});
+        if(!local.sealed())throw new IllegalStateException("Finaliza la captura primero.");fileTask("Generando plantillas en la PDA",()->{saveFile=LocalExport.generate(local,client.profile,this::progress);},()->{render();new AlertDialog.Builder(this).setTitle("Plantillas y reporte guardados").setMessage("Las bloqueadas e incidencias están en el reporte y quedan fuera de las plantillas. Guardar otra copia entrega el mismo paquete. Pendiente de cargar al WMS.").setPositiveButton("Guardar ZIP",(d,w)->{try{save(saveFile,"application/zip");}catch(Exception e){error(e);}}).setNegativeButton("Cerrar",null).show();});
     }
     private void backup() throws Exception {
-        if(local==null)return;File file=new File(client.directory,"Respaldo_Movimientos_"+NativeClient.opId(client.profile).substring(0,8)+".json");
-        networkTask("Preparando respaldo",()->{JSONObject b=local.backup(NativeClient.opId(client.profile),client.profile.getString("device_id"));try(FileOutputStream out=new FileOutputStream(file)){out.write(b.toString().getBytes(StandardCharsets.UTF_8));out.getFD().sync();}},()->{try{save(file,"application/json");}catch(Exception e){error(e);}});
+        if(local==null)throw new IOException("Abre una operación primero.");File file=new File(getCacheDir(),"Respaldo_Q9_"+NativeClient.opId(client.profile)+".zip");
+        fileTask("Preparando respaldo completo",()->{OfflineOperations.backup(local,client.profile,file);},()->save(file,"application/zip"));
     }
     private void save(File file,String mime) throws Exception {saveFile=file;Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType(mime);i.putExtra(Intent.EXTRA_TITLE,file.getName());startActivityForResult(i,10);}
-    private void pick(String kind,String mime) throws Exception {if(captureBusy||networkBusy)throw new IllegalStateException("Espera a que termine la acción actual.");openKind=kind;Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{mime,"application/octet-stream"});startActivityForResult(i,11);}
+    private void pick(String kind) throws Exception {if(captureBusy||fileBusy)throw new IllegalStateException("Espera a que termine la acción actual.");openKind=kind;Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");startActivityForResult(i,11);}
+    private String filename(Uri uri){try(android.database.Cursor c=getContentResolver().query(uri,new String[]{android.provider.OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())return c.getString(0);}catch(Exception ignored){}return uri.getLastPathSegment()==null?"BoxInventory.xlsx":uri.getLastPathSegment();}
     @Override public void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null||data.getData()==null){focusScan();return;}Uri uri=data.getData();
-        if(request==10&&saveFile!=null){File file=saveFile;networkTask("Guardando archivo",()->{try(InputStream in=new FileInputStream(file);OutputStream out=getContentResolver().openOutputStream(uri)){if(out==null)throw new IOException("No se puede escribir en esa carpeta.");NativeClient.copy(in,out,128L*1024*1024);}},()->toast("Archivo guardado: "+file.getName()));}
-        else if(request==11){String kind=openKind;if(kind.equals("BOOTSTRAP")){switching=true;networkTask("Importando inventario por USB",()->importBootstrap(uri),()->{page="scan";lastNetwork="Inventario importado por USB · lectura local";render();});}else if(kind.equals("RECEIPT"))networkTask("Comprobando entrega USB",()->{try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Archivo no disponible.");ByteArrayOutputStream b=new ByteArrayOutputStream();NativeClient.copy(in,b,128*1024);client.receipt(local,new JSONObject(b.toString("UTF-8")));}},()->{render();toast("Entrega a Windows comprobada. Las acciones confirmadas ya no están pendientes.");});}
+        if(request==10&&saveFile!=null){File file=saveFile;fileTask("Guardando archivo seleccionado",()->{try(InputStream in=new FileInputStream(file);OutputStream out=getContentResolver().openOutputStream(uri)){if(out==null)throw new IOException("No se puede escribir en esa ubicación.");NativeClient.copy(in,out,1024L*1024*1024);out.flush();if(out instanceof FileOutputStream)((FileOutputStream)out).getFD().sync();}},()->toast("Archivo guardado: "+file.getName()));}
+        else if(request==11){String kind=openKind;if(kind.equals("RESTORE")){fileTask("Restaurando respaldo completo",()->{try(InputStream in=getContentResolver().openInputStream(uri)){activate(OfflineOperations.restore(in,new File(getFilesDir(),"operations"),this::progress));}},()->{render();toast("Operación restaurada. Sus lecturas se conservaron.");});}else importDialog(uri,kind.equals("REVALIDATE"));}
     }
-    private void importBootstrap(Uri uri) throws Exception {
-        File staging=new File(getFilesDir(),"incoming_"+UUID.randomUUID());staging.mkdirs();JSONObject profile=null;File gzip=new File(staging,"inventory.db.gz");boolean inv=false;
-        try {
-            try(InputStream file=getContentResolver().openInputStream(uri);ZipInputStream zip=new ZipInputStream(file)){
-                ZipEntry entry;int entries=0;while((entry=zip.getNextEntry())!=null){entries++;if(entries>2||entry.isDirectory())throw new IOException("Paquete inicial no válido.");if(entry.getName().equals("inicio.json")&&profile==null){ByteArrayOutputStream b=new ByteArrayOutputStream();NativeClient.copy(zip,b,128*1024);profile=new JSONObject(b.toString("UTF-8"));}
-                    else if(entry.getName().equals("inventory.db.gz")&&!inv){try(FileOutputStream out=new FileOutputStream(gzip)){NativeClient.copy(zip,out,128L*1024*1024);out.getFD().sync();}inv=true;}else throw new IOException("El ZIP no es un paquete inicial de Movimientos Q9.");zip.closeEntry();}
-            }
-            if(profile==null||!inv||profile.getInt("protocol")!=2)throw new IOException("Paquete inicial incompleto.");String op=NativeClient.opId(profile);if(!op.matches("[a-f0-9]{32}"))throw new IOException("Identificador de operación inválido.");canSwitch(op);NativeClient.server(profile.getString("server"));UUID.fromString(profile.getString("device_id"));if(!profile.getString("token").matches("[A-Za-z0-9_-]{40,100}"))throw new IOException("Clave del paquete inicial inválida.");
-            MessageDigest hash=MessageDigest.getInstance("SHA-256");try(InputStream in=new FileInputStream(gzip)){byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)hash.update(b,0,n);}if(gzip.length()!=profile.getLong("inventory_size")||!NativeClient.hex(hash.digest()).equals(profile.getString("inventory_sha256")))throw new IOException("Inventario dañado o incompleto.");
-            File directory=new File(getFilesDir(),"operations/"+op);directory.mkdirs();File old=new File(directory,"profile.json");
-            if(old.isFile()){JSONObject previous=NativeClient.read(old);if(!previous.getString("device_id").equals(profile.getString("device_id"))||!previous.getString("token").equals(profile.getString("token")))throw new IOException("Esta operación ya tiene otra identidad local. Se conservaron sus lecturas.");}
-            if(!new File(directory,"inventory.db").isFile())NativeClient.importInventory(gzip,directory,profile,this::progress);
-            NativeClient next=new NativeClient(directory,profile);next.save();if(local!=null)local.close();client=next;local=new LocalStore(directory);prefs.edit().putString("current_operation",op).commit();lastResult=null;
-        }finally{gzip.delete();staging.delete();}
+    private void importDialog(Uri uri,boolean validation){
+        LinearLayout content=column();content.setPadding(dp(18),dp(8),dp(18),dp(8));content.addView(text(filename(uri),14,BLUE));EditText name=input("Nombre de operación",false),cut=input("Corte WMS: aaaa-mm-dd hh:mm",false);
+        if(!validation){name.setText("Movimientos "+new java.text.SimpleDateFormat("yyyy-MM-dd",java.util.Locale.ROOT).format(new java.util.Date()));content.addView(name);}content.addView(cut);content.addView(text("Indica la fecha y hora local del inventario exportado del WMS. El archivo debe ser BoxInventory .xlsx.",14,AMBER));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(validation?"Corte nuevo para revalidar":"Cargar inventario y abrir operación").setView(content).setPositiveButton("Cargar",null).setNegativeButton("Cancelar",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(-1).setOnClickListener(b->{try{String date=OfflineOperations.validCut(cut.getText().toString()),opname=name.getText().toString();if(!validation)canSwitch("");dialog.dismiss();fileTask("Importando BoxInventory",()->{try(InputStream in=getContentResolver().openInputStream(uri)){if(validation)OfflineOperations.revalidate(in,local,filename(uri),date,this::progress);else activate(OfflineOperations.start(in,new File(getFilesDir(),"operations"),opname,filename(uri),date,false,this::progress));}},()->{lastStatus="Inventario listo · guardado automático";render();toast(validation?"Corte de validación guardado.":"Inventario listo. Puedes escanear.");});}catch(Exception e){error(e);}}));dialog.show();
     }
-    private void networkTask(String title,Task work,Task done){
-        if(networkBusy){toast("Ya hay una transferencia en proceso.");return;}networkBusy=true;progress(title);
-        network.execute(()->{try{work.run();ui.post(()->{networkBusy=false;switching=false;if(destroyed)return;try{done.run();updateCounts();}catch(Exception e){error(e);}});}catch(Exception e){ui.post(()->{networkBusy=false;switching=false;lastNetwork="Entrega pendiente · lecturas conservadas";if(!destroyed){updateCounts();error(e);}});}});
+    private void fileTask(String title,Task work,Task done){
+        if(fileBusy||captureBusy){toast("Espera a que termine la acción actual.");return;}fileBusy=true;switching=true;progress(title);
+        files.execute(()->{try{work.run();ui.post(()->{fileBusy=false;switching=false;if(destroyed)return;try{done.run();updateCounts();}catch(Exception e){error(e);}});}catch(Exception e){ui.post(()->{fileBusy=false;switching=false;lastStatus="Acción no completada · lecturas conservadas";if(!destroyed){updateCounts();error(e);}});}});
     }
-    private void progress(String value){ui.post(()->{lastNetwork=value;if(syncText!=null&&!destroyed)syncText.setText(value);});}
-    private String message(Exception e){if(e instanceof java.net.SocketTimeoutException)return "Windows no respondió a tiempo. Revisa IP, Wi‑Fi y permiso de Python en el firewall. Reintenta; tus lecturas se conservan.";if(e instanceof java.net.ConnectException)return "No se pudo conectar a Windows. Puedes trabajar con el inventario local y entregar la bitácora por USB.";return e.getMessage()==null?"No se pudo completar la acción. Tus lecturas guardadas se conservan.":e.getMessage();}
+    private void progress(String value){ui.post(()->{lastStatus=value;if(syncText!=null&&!destroyed)syncText.setText(value);});}
+    private String message(Exception e){return e.getMessage()==null?"No se pudo completar la acción. Tus lecturas guardadas se conservan.":e.getMessage();}
     private void error(Exception e){if(destroyed)return;new AlertDialog.Builder(this).setTitle("Revisar").setMessage(message(e)).setPositiveButton("Cerrar",(d,w)->focusScan()).show();}
-    private void toast(String text){if(!destroyed)Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
+    private void toast(String value){if(!destroyed)Toast.makeText(this,value,Toast.LENGTH_LONG).show();}
     private void tone(String status){try{ToneGenerator t=new ToneGenerator(AudioManager.STREAM_NOTIFICATION,90);t.startTone(status.equals("ACCEPTED")?ToneGenerator.TONE_PROP_ACK:ToneGenerator.TONE_PROP_NACK,status.equals("ACCEPTED")?120:350);ui.postDelayed(t::release,500);if(!status.equals("ACCEPTED")){Vibrator v=(Vibrator)getSystemService(VIBRATOR_SERVICE);if(v!=null)v.vibrate(new long[]{0,140,70,140},-1);}}catch(Exception ignored){}}
-    private void menu(){String[] options={"Vincular / cambiar operación","Importar paquete inicial USB","Cambiar dirección de Windows","Operaciones guardadas","Guardar respaldo USB","Ayuda"};new AlertDialog.Builder(this).setTitle("Movimientos Q9").setItems(options,(d,w)->{try{switch(w){case 0:pairScreen("");break;case 1:pick("BOOTSTRAP","application/zip");break;case 2:addressDialog();break;case 3:history();break;case 4:backup();break;default:new AlertDialog.Builder(this).setTitle("Uso de la Q9").setMessage("1. Lector en modo teclado / HID, sufijo Enter.\n2. Escanea y espera ACEPTADA antes de mover.\n3. CAJA BLOQUEADA: sepárala; su ubicación es opcional.\n4. Al terminar el lote, confirma su destino físico.\n5. Finaliza, sincroniza y genera plantillas.\n\nEl corte es una copia del WMS, no una consulta en vivo. Por USB importa el paquete inicial y entrega el respaldo final a Windows. Importa luego el comprobante para confirmar la entrega.\n\nNo borres los datos de esta aplicación durante una operación.").setPositiveButton("Cerrar",null).show();}}catch(Exception e){error(e);}}).show();}
-    private void addressDialog() throws Exception {if(client==null)throw new IllegalStateException("Vincula una operación primero.");EditText address=input("http://192.168.1.10:8765",false);address.setText(client.profile.getString("server"));new AlertDialog.Builder(this).setTitle("Dirección de Windows").setView(address).setPositiveButton("Guardar",(d,w)->{try{if(networkBusy)throw new IllegalStateException("Espera a que termine la transferencia.");client.profile.put("server",NativeClient.server(address.getText().toString()));client.save();toast("Dirección actualizada. Los datos locales se conservan.");}catch(Exception e){error(e);}}).setNegativeButton("Cancelar",null).show();}
+    private void menu(){String[] options={"Nueva operación / cargar Excel","Operaciones guardadas","Guardar respaldo completo","Restaurar respaldo completo","Ayuda"};new AlertDialog.Builder(this).setTitle("Movimientos Q9 independiente").setItems(options,(d,w)->{try{if(fileBusy||captureBusy)throw new IllegalStateException("Espera a que termine la acción actual.");switch(w){case 0:canSwitch("");pick("INVENTORY");break;case 1:history();break;case 2:backup();break;case 3:canSwitch("");pick("RESTORE");break;default:new AlertDialog.Builder(this).setTitle("Uso de la Q9").setMessage("1. Carga BoxInventory desde la memoria o una USB.\n2. Lector teclado / HID, sufijo Enter.\n3. Espera ACEPTADA antes de mover.\n4. CAJA BLOQUEADA: sepárala; su ubicación es opcional.\n5. Confirma el destino físico de cada lote.\n6. Finaliza, genera y guarda el ZIP de plantillas.\n\nPuedes cargar un corte nuevo antes de generar. Las diferencias conservan el destino físico en el reporte.\n\nSi Android no muestra la USB, copia el Excel a Descargas y selecciona esa copia.\n\nEl corte es una copia del WMS. La aplicación no confirma la importación de las plantillas al sistema.\n\nConserva un respaldo completo y los datos de la aplicación.").setPositiveButton("Cerrar",null).show();}}catch(Exception e){error(e);}}).show();}
     private void history() throws Exception {
         File[] dirs=new File(getFilesDir(),"operations").listFiles();if(dirs==null||dirs.length==0){toast("No hay operaciones guardadas.");return;}
-        java.util.ArrayList<File> files=new java.util.ArrayList<>();java.util.ArrayList<String> names=new java.util.ArrayList<>();for(File f:dirs){File p=new File(f,"profile.json");if(p.isFile()){JSONObject profile=NativeClient.read(p);files.add(f);names.add(profile.has("operation")?profile.getJSONObject("operation").getString("name"):f.getName());}}
-        new AlertDialog.Builder(this).setTitle("Operaciones guardadas").setItems(names.toArray(new String[0]),(d,w)->{try{if(networkBusy||captureBusy)throw new IllegalStateException("Espera a que termine la acción actual.");canSwitch(files.get(w).getName());if(local!=null)local.close();local=null;loadOperation(files.get(w));prefs.edit().putString("current_operation",files.get(w).getName()).commit();lastResult=null;page="scan";render();}catch(Exception e){error(e);}}).show();
+        java.util.ArrayList<File> saved=new java.util.ArrayList<>();java.util.ArrayList<String> names=new java.util.ArrayList<>();for(File f:dirs){if(!f.getName().matches("[a-f0-9]{32}"))continue;File p=new File(f,"profile.json");if(p.isFile()){JSONObject profile=NativeClient.read(p);saved.add(f);names.add(profile.getJSONObject("operation").getString("name")+" · "+profile.getJSONObject("snapshot").optString("cut_at").replace('T',' '));}}
+        new AlertDialog.Builder(this).setTitle("Operaciones guardadas").setItems(names.toArray(new String[0]),(d,w)->{try{canSwitch(saved.get(w).getName());activate(saved.get(w));lastResult=null;page="scan";render();}catch(Exception e){error(e);}}).show();
     }
 }

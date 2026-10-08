@@ -1,4 +1,0 @@
-<network-security-config>
-    <!-- HTTP se limita en NativeClient a IPv4 privada elegida por el operador. -->
-    <base-config cleartextTrafficPermitted="true"><trust-anchors><certificates src="system" /></trust-anchors></base-config>
-</network-security-config>
