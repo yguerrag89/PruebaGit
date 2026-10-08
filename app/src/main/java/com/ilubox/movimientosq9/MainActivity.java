@@ -83,7 +83,8 @@ public final class MainActivity extends Activity {
         scanInput=null;resultTitle=null;countsText=null;lotText=null;lotButton=null;scanButton=null;
         root=column();root.setBackgroundColor(0xfff3f6f8);
         LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(dp(14),dp(4),dp(8),dp(4));bar.setBackgroundColor(BLUE);
-        TextView brand=text(title,19,Color.WHITE);brand.setTypeface(null,Typeface.BOLD);bar.addView(brand,new LinearLayout.LayoutParams(0,dp(44),1));
+        boolean demo=local!=null&&client!=null&&client.profile.optJSONObject("snapshot")!=null&&client.profile.optJSONObject("snapshot").optInt("demo")==1;
+        TextView brand=text(demo?"DEMO · Movimientos Q9":title,19,Color.WHITE);brand.setTypeface(null,Typeface.BOLD);brand.setMaxLines(1);brand.setEllipsize(android.text.TextUtils.TruncateAt.END);bar.addView(brand,new LinearLayout.LayoutParams(0,dp(44),1));
         Button menu=button("⋮",this::menu);menu.setTextSize(24);bar.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(44)));root.addView(bar);
         syncText=text(lastNetwork,12,BLUE);syncText.setPadding(dp(14),dp(5),dp(14),dp(5));root.addView(syncText);
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);body=column();body.setPadding(dp(14),0,dp(14),dp(12));scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
@@ -172,7 +173,7 @@ public final class MainActivity extends Activity {
         detail+=status.equals("ACCEPTED")?"Guardada en el lote. Puedes moverla.":status.equals("BLOCKED")?"Sepárala. No se puede mover en WMS.":status.equals("DUPLICATE")?"Ya está registrada. Evita moverla otra vez.":result.optString("reason")+". Sepárala para revisión.";
         if(r!=null&&!r.optString("origin").isEmpty())detail+="\nOrigen WMS: "+r.optString("origin");resultBody.setText(detail);
     }
-    private void updateCounts(){try{if(local==null)return;JSONObject s=local.stats();if(countsText!=null)countsText.setText(s.getInt("ACCEPTED")+" aceptadas · "+s.getInt("BLOCKED")+" bloqueadas · "+s.getInt("REVIEW")+" revisar");if(lotText!=null)lotText.setText("Lote "+s.getInt("lot_number")+" · "+s.getInt("lot_count")+" cajas sin destino");if(lotButton!=null)lotButton.setEnabled(s.getInt("lot_count")>0&&!local.sealed());if(syncText!=null&&!networkBusy)syncText.setText(s.getInt("pending")+" acciones por entregar · "+(s.optString("last_sync").isEmpty()?"inventario local":"última entrega "+s.getString("last_sync")));}catch(Exception e){error(e);}}
+    private void updateCounts(){try{if(local==null)return;JSONObject s=local.stats();if(countsText!=null)countsText.setText("Aceptadas: "+s.getInt("ACCEPTED")+" · Bloqueadas: "+s.getInt("BLOCKED")+" · Revisar: "+s.getInt("REVIEW"));if(lotText!=null)lotText.setText("Lote "+s.getInt("lot_number")+" · "+s.getInt("lot_count")+(s.getInt("lot_count")==1?" caja sin destino":" cajas sin destino"));if(lotButton!=null)lotButton.setEnabled(s.getInt("lot_count")>0&&!local.sealed());if(syncText!=null&&!networkBusy)syncText.setText(s.getInt("pending")+(s.getInt("pending")==1?" acción por entregar · ":" acciones por entregar · ")+(s.optString("last_sync").isEmpty()?"inventario local":"última entrega "+s.getString("last_sync")));}catch(Exception e){error(e);}}
     private void focusScan(){if(scanInput!=null&&!captureBusy&&!local.sealed())scanInput.post(()->{if(scanInput!=null)scanInput.requestFocus();});}
     private void destinationDialog() throws Exception {
         if(captureBusy)throw new IllegalStateException("Espera a que se guarde la lectura.");if(local.lotCount()==0)throw new IllegalStateException("El lote no tiene cajas aceptadas.");

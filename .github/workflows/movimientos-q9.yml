@@ -56,4 +56,5 @@ jobs:
           path: |
             build/qa
             build/android-smoke.txt
+            build/dex/classes.dex
           retention-days: 14

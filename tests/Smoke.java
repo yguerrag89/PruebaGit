@@ -19,6 +19,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.UUID;
+import android.util.Base64;
 
 /** Se ejecuta en SQLite y Activity reales de Android, sin librerías de prueba. */
 public final class Smoke extends Instrumentation {
@@ -61,6 +62,13 @@ public final class Smoke extends Instrumentation {
         JSONObject backup=restarted.backup(op,"22222222-2222-4222-8222-222222222222");NativeClient.write(new File(output,"android_backup.json"),backup);
         String canonical=NativeClient.canonical(new JSONObject().put("z","Separada / ñ\n").put("a",true).put("n",2));check(canonical.equals("{\"a\":true,\"n\":2,\"z\":\"Separada / ñ\\n\"}"),"JSON canónico compatible con Python");
         MessageDigest hash=MessageDigest.getInstance("SHA-256");JSONArray events=backup.getJSONArray("events");for(int i=0;i<events.length();i++)hash.update((NativeClient.canonical(events.getJSONObject(i))+"\n").getBytes(StandardCharsets.UTF_8));NativeClient.write(new File(output,"android_result.json"),new JSONObject().put("checks",checks).put("event_sha256",NativeClient.hex(hash.digest())).put("stats",restarted.stats()));restarted.close();
+        // SQLite y comprobante PRODUCIDOS POR WINDOWS: comprueba el contrato
+        // entre plataformas, incluyendo acuse HMAC, hash y fechas originales.
+        File imported=fixture("qa_windows_inventory",op);File gz=new File(imported,"from_windows.gz");try(FileOutputStream out=new FileOutputStream(gz)){out.write(Base64.decode(asset("inventory.gz.b64"),Base64.DEFAULT));}
+        JSONObject importedProfile=NativeClient.read(new File(imported,"profile.json"));NativeClient.importInventory(gz,imported,importedProfile,t->{});LocalStore importedStore=new LocalStore(imported);check(importedStore.scan("DEMOU004").getString("result").equals("BLOCKED"),"SQLite de Windows legible en Android 6");importedStore.close();
+        File usbDir=fixture("qa_usb_receipt",op);LocalStore usbStore=new LocalStore(usbDir);JSONArray received=new JSONArray(asset("received_events.json"));SQLiteDatabase injection=SQLiteDatabase.openDatabase(new File(usbDir,"capture.db").getAbsolutePath(),null,SQLiteDatabase.OPEN_READWRITE);
+        for(int i=0;i<received.length();i++){JSONObject e=received.getJSONObject(i);injection.execSQL("INSERT INTO events(seq,event_id,kind,payload,occurred_at) VALUES(?,?,?,?,?)",new Object[]{e.getInt("seq"),e.getString("event_id"),e.getString("kind"),e.getJSONObject("payload").toString(),e.getString("occurred_at")});}injection.close();
+        NativeClient usbClient=new NativeClient(usbDir,NativeClient.read(new File(usbDir,"profile.json")));JSONObject receipt=new JSONObject(asset("receipt.json"));JSONObject forged=new JSONObject(receipt.toString());forged.put("ack_seq",999);rejects(()->usbClient.receipt(usbStore,forged));check(usbStore.pending()==received.length(),"Comprobante alterado conserva pendientes");usbClient.receipt(usbStore,receipt);check(usbStore.pending()==0,"Comprobante de Windows confirma bitácora Android exactamente");usbStore.close();
         String uiOp="33333333333343338333333333333333";File uiDir=fixture("operations/"+uiOp,uiOp);getTargetContext().getSharedPreferences("movimientos",0).edit().putString("current_operation",uiOp).commit();
         Intent intent=new Intent(getTargetContext(),com.ilubox.movimientosq9.MainActivity.class);intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);Activity activity=startActivitySync(intent);waitForIdleSync();Thread.sleep(500);screenshot("01_escaneo.png");
         EditText field=findInput(activity.getWindow().getDecorView(),"Escanea código de caja");check(field!=null,"Pantalla nativa de escaneo");
@@ -69,5 +77,6 @@ public final class Smoke extends Instrumentation {
         LocalStore uiStore=new LocalStore(uiDir);check(uiStore.stats().getInt("ACCEPTED")==1&&uiStore.stats().getInt("BLOCKED")==1&&uiStore.pending()==2,"Enter del lector registra una sola acción");uiStore.close();runOnMainSync(activity::finish);
     }
     private EditText findInput(View v,String hint){if(v instanceof EditText&&hint.contentEquals(((EditText)v).getHint()))return (EditText)v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){EditText found=findInput(g.getChildAt(i),hint);if(found!=null)return found;}}return null;}
+    private String asset(String name) throws Exception {try(InputStream in=getContext().getAssets().open(name)){ByteArrayOutputStream b=new ByteArrayOutputStream();NativeClient.copy(in,b,256*1024);return b.toString("UTF-8");}}
     private void screenshot(String name) throws Exception {Bitmap b=getUiAutomation().takeScreenshot();if(b==null)throw new IOException("Sin captura Android");try(FileOutputStream out=new FileOutputStream(new File(output,name))){b.compress(Bitmap.CompressFormat.PNG,100,out);}b.recycle();}
 }
