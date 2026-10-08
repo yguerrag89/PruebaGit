@@ -77,6 +77,6 @@ public final class Smoke extends Instrumentation {
         LocalStore uiStore=new LocalStore(uiDir);check(uiStore.stats().getInt("ACCEPTED")==1&&uiStore.stats().getInt("BLOCKED")==1&&uiStore.pending()==2,"Enter del lector registra una sola acción");uiStore.close();runOnMainSync(activity::finish);
     }
     private EditText findInput(View v,String hint){if(v instanceof EditText&&hint.contentEquals(((EditText)v).getHint()))return (EditText)v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){EditText found=findInput(g.getChildAt(i),hint);if(found!=null)return found;}}return null;}
-    private String asset(String name) throws Exception {try(InputStream in=getContext().getAssets().open(name)){ByteArrayOutputStream b=new ByteArrayOutputStream();NativeClient.copy(in,b,256*1024);return b.toString("UTF-8");}}
+    private String asset(String name) throws Exception {try(InputStream in=getContext().getAssets().open(name)){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buffer=new byte[4096];int n;while((n=in.read(buffer))!=-1){if(b.size()+n>256*1024)throw new IOException("Fixture demasiado grande");b.write(buffer,0,n);}return b.toString("UTF-8");}}
     private void screenshot(String name) throws Exception {Bitmap b=getUiAutomation().takeScreenshot();if(b==null)throw new IOException("Sin captura Android");try(FileOutputStream out=new FileOutputStream(new File(output,name))){b.compress(Bitmap.CompressFormat.PNG,100,out);}b.recycle();}
 }
