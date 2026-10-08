@@ -1,4 +1,4 @@
-name: Herramientas y APK Movimientos Q9
+name: Verificar APK nativa Movimientos Q9
 on:
   push:
     branches: [movimientos-q9-nativa-v0-2]
@@ -6,9 +6,9 @@ on:
 permissions:
   contents: read
 jobs:
-  tools:
-    if: ${{ !contains(github.event.head_commit.message, '[apk]') }}
+  android:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -18,16 +18,42 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools'
-      - name: Preparar SDK
+      - name: SDK y compilación real
         run: |
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0' >/dev/null
-          mkdir -p q9-tools/jdk q9-tools/sdk
-          cp -a "$JAVA_HOME/bin" "$JAVA_HOME/lib" "$JAVA_HOME/conf" "$JAVA_HOME/release" q9-tools/jdk/
-          cp -a "$ANDROID_HOME/build-tools/35.0.0" q9-tools/sdk/build-tools
-          cp "$ANDROID_HOME/platforms/android-35/android.jar" q9-tools/sdk/android.jar
-          tar -czf Q9_native_tools.tar.gz q9-tools
-      - uses: actions/upload-artifact@v4
+          export Q9_JAVA="$JAVA_HOME"
+          export Q9_BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          export Q9_ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
+          python3 build_native.py --unsigned
+          python3 build_tests.py
+          keytool -genkeypair -keystore build/qa.p12 -storepass androidtest -keypass androidtest -alias qa -keyalg RSA -keysize 2048 -validity 365 -dname 'CN=Q9 QA' -noprompt
+          java -jar "$Q9_BUILD_TOOLS/lib/apksigner.jar" sign --ks build/qa.p12 --ks-pass pass:androidtest --out build/smoke-app.apk build/aligned.apk
+          java -jar "$Q9_BUILD_TOOLS/lib/apksigner.jar" sign --ks build/qa.p12 --ks-pass pass:androidtest --out build/smoke-tests.apk build/tests-aligned.apk
+      - name: Permitir aceleración del emulador
+        run: |
+          sudo chmod 666 /dev/kvm
+      - name: Probar en Android 6 con resolución Q9
+        uses: reactivecircus/android-emulator-runner@v2
         with:
-          name: Q9_native_tools
-          path: Q9_native_tools.tar.gz
-          retention-days: 3
+          api-level: 23
+          target: default
+          arch: x86
+          profile: Nexus S
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -skin 480x800
+          disable-animations: true
+          script: |
+            adb root
+            adb wait-for-device
+            adb install build/smoke-app.apk
+            adb install build/smoke-tests.apk
+            adb shell am instrument -w com.ilubox.movimientosq9.tests/com.ilubox.movimientosq9.tests.Smoke | tee build/android-smoke.txt
+            adb pull /data/user/0/com.ilubox.movimientosq9/files/qa build/qa
+            grep -q 'OK ·' build/android-smoke.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Q9_Android_23_verificacion
+          path: |
+            build/qa
+            build/android-smoke.txt
+          retention-days: 14

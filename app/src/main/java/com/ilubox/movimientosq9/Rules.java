@@ -1,0 +1,44 @@
+package com.ilubox.movimientosq9;
+
+import java.text.Normalizer;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/** Normalización compatible con core.inventory de Windows. Sin dependencia de UI. */
+public final class Rules {
+    private Rules() {}
+    public static String clean(String raw) { return raw == null ? "" : raw.trim().replace('\u3000', ' ').trim(); }
+    public static String barcode(String raw) {
+        String s = clean(raw).toUpperCase(Locale.ROOT).replaceAll("(?U)\\s+", "");
+        Matcher m = Pattern.compile("(.+?)U0*(\\d+)").matcher(s);
+        if (!m.matches()) return s;
+        String number = m.group(2).replaceFirst("^0+(?!$)", "");
+        while (number.length() < 3) number = "0" + number;
+        return m.group(1) + "U" + number;
+    }
+    public static String locationKey(String raw) {
+        return Normalizer.normalize(clean(raw), Normalizer.Form.NFKC).toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+    }
+    public static boolean looksLocation(String raw) {
+        return clean(raw).toUpperCase(Locale.ROOT).matches("(?:2[AB]|MC|MD)[?_'\\-].*") && !barcode(raw).matches(".*U\\d+$");
+    }
+    public static String proposedDestination(String raw) {
+        String key = locationKey(raw);
+        if (key.isEmpty() || clean(raw).length() > 100 || key.matches(".*U\\d+$")) throw new IllegalArgumentException("Escanea una ubicación destino válida.");
+        Matcher m = Pattern.compile("(2[AB])M(\\d+)([A-Z]\\d{3,})").matcher(key);
+        Matcher t = Pattern.compile("(2[AB])TMP(\\d+)").matcher(key);
+        String proposed = m.matches() ? m.group(1) + "_M" + m.group(2) + "-" + m.group(3) : t.matches() ? t.group(1) + "-TMP" + t.group(2) : clean(raw).toUpperCase(Locale.ROOT);
+        if (proposed.matches(".*[?'\"<>].*")) throw new IllegalArgumentException("Escribe el código oficial de la ubicación del WMS.");
+        return proposed;
+    }
+    public static String label(String status) {
+        switch (status) {
+            case "ACCEPTED": return "ACEPTADA";
+            case "BLOCKED": return "CAJA BLOQUEADA";
+            case "DUPLICATE": return "YA ESCANEADA";
+            case "CANCELLED": return "RETIRADA DEL LOTE";
+            default: return "REVISAR CAJA";
+        }
+    }
+}
