@@ -101,7 +101,7 @@ public final class LocalStore implements AutoCloseable {
             event("SCAN",new JSONObject().put("code",raw).put("record_id",id).put("result",status).put("reason",reason),stamp);
             db.setTransactionSuccessful();
         } finally {db.endTransaction();}
-        JSONObject rec=first("SELECT r.*,l.destination,l.state AS lot_state FROM records r LEFT JOIN lots l ON l.number=r.lot_number WHERE r.id=?",id);
+        JSONObject rec=first("SELECT r.*,COALESCE(l.destination,'') AS destination,COALESCE(l.state,'') AS lot_state FROM records r LEFT JOIN lots l ON l.number=r.lot_number WHERE r.id=?",id);
         return new JSONObject().put("result",status).put("reason",reason).put("record",rec).put("lot_count",lotCount());
     }
     public synchronized JSONObject destination(String raw) throws Exception {
@@ -183,7 +183,7 @@ public final class LocalStore implements AutoCloseable {
         else if(!filter.isEmpty()){where="r.status=?";args.add(filter);}
         if(!search.isEmpty()){where+=" AND instr(r.barcode,?)>0";args.add(Rules.barcode(search));}
         JSONArray rows=new JSONArray();
-        try(Cursor c=db.rawQuery("SELECT r.*,l.destination,l.state AS lot_state FROM records r LEFT JOIN lots l ON l.number=r.lot_number WHERE "+where+" ORDER BY r.last_seen DESC,r.rowid DESC LIMIT 40 OFFSET "+Math.max(0,offset),args.toArray(new String[0]))){while(c.moveToNext())rows.put(row(c));}
+        try(Cursor c=db.rawQuery("SELECT r.*,COALESCE(l.destination,'') AS destination,COALESCE(l.state,'') AS lot_state FROM records r LEFT JOIN lots l ON l.number=r.lot_number WHERE "+where+" ORDER BY r.last_seen DESC,r.rowid DESC LIMIT 40 OFFSET "+Math.max(0,offset),args.toArray(new String[0]))){while(c.moveToNext())rows.put(row(c));}
         return rows;
     }
     public synchronized JSONArray lots() throws Exception {

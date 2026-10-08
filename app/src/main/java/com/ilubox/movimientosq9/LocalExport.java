@@ -21,7 +21,7 @@ public final class LocalExport {
         // preparación debe ser visible para todas, también en Android 6.
         s.db.beginTransaction();
         s.db.execSQL("DROP TABLE IF EXISTS export_rows");s.db.execSQL("CREATE TABLE export_rows(id TEXT PRIMARY KEY,category TEXT,export_reason TEXT,latest_origin TEXT,latest_available TEXT,latest_locked TEXT)");
-        try(Cursor c=s.db.rawQuery("SELECT r.*,l.destination,l.state AS lot_state FROM records r LEFT JOIN lots l ON l.number=r.lot_number ORDER BY r.rowid",null)){
+        try(Cursor c=s.db.rawQuery("SELECT r.*,COALESCE(l.destination,'') AS destination,COALESCE(l.state,'') AS lot_state FROM records r LEFT JOIN lots l ON l.number=r.lot_number ORDER BY r.rowid",null)){
             while(c.moveToNext()){
                 JSONObject r=LocalStore.row(c);String status=r.getString("status"),category=status,reason=r.optString("reason"),origin="",available="",locked="";
                 if(status.equals("ACCEPTED")){
@@ -44,7 +44,7 @@ public final class LocalExport {
         }finally{s.db.endTransaction();if(validation!=s.inventory)validation.close();}
     }
     private static Xlsx.Sheet details(LocalStore s,String title,String categories,String cut){
-        return new Xlsx.Sheet(title,DETAIL,sink->{try(Cursor c=s.db.rawQuery("SELECT r.*,l.destination,x.category,x.export_reason,x.latest_origin,x.latest_available,x.latest_locked FROM records r JOIN export_rows x ON x.id=r.id LEFT JOIN lots l ON l.number=r.lot_number WHERE "+categories+" ORDER BY r.rowid",null)){while(c.moveToNext()){
+        return new Xlsx.Sheet(title,DETAIL,sink->{try(Cursor c=s.db.rawQuery("SELECT r.*,COALESCE(l.destination,'') AS destination,x.category,x.export_reason,x.latest_origin,x.latest_available,x.latest_locked FROM records r JOIN export_rows x ON x.id=r.id LEFT JOIN lots l ON l.number=r.lot_number WHERE "+categories+" ORDER BY r.rowid",null)){while(c.moveToNext()){
             JSONObject r=LocalStore.row(c);String physical=r.optString("actual_location");if(physical.isEmpty()&&r.getString("status").matches("BLOCKED|REVIEW"))physical="Sin ubicación física informada";
             sink.row(r.getString("barcode"),label(r.getString("category")),r.getString("export_reason"),r.isNull("lot_number")?"":r.getInt("lot_number"),r.getString("origin"),r.optString("destination"),physical,r.getString("box_type"),r.getString("customer_code"),r.getString("total"),r.getString("available"),r.getString("locked"),r.getString("latest_origin"),r.getString("latest_available"),r.getString("latest_locked"),cut,r.getString("first_seen"),r.getString("last_seen"),r.getInt("attempts"),r.getString("note"));
         }}});
