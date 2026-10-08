@@ -45,6 +45,7 @@ jobs:
             adb wait-for-device
             adb install build/smoke-app.apk
             adb install build/smoke-tests.apk
+            adb shell am start -W -n com.ilubox.movimientosq9.tests/.GrantActivity
             adb shell am instrument -w com.ilubox.movimientosq9.tests/com.ilubox.movimientosq9.tests.Smoke | tee build/android-smoke.txt
             adb logcat -d > build/android-logcat.txt
             adb pull /data/user/0/com.ilubox.movimientosq9/files/qa build/qa
