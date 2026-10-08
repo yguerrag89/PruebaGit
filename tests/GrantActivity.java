@@ -12,6 +12,7 @@ public final class GrantActivity extends Activity {
         grantUriPermission("com.ilubox.movimientosq9",
             Uri.parse("content://com.ilubox.movimientosq9.tests.documents/tree/root"),
             Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
-        finish();
+        // Android 6 necesita completar el primer frame para devolver am start -W.
+        new android.os.Handler().postDelayed(this::finish,500);
     }
 }

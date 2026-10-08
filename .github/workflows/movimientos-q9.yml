@@ -45,12 +45,12 @@ jobs:
             adb wait-for-device
             adb install build/smoke-app.apk
             adb install build/smoke-tests.apk
-            adb shell am start -W -n com.ilubox.movimientosq9.tests/.GrantActivity
-            timeout 180s adb shell am instrument -w -e stage core com.ilubox.movimientosq9.tests/com.ilubox.movimientosq9.tests.Smoke | tee build/android-core.txt
+            timeout -k 5s 20s adb shell am start -W -n com.ilubox.movimientosq9.tests/.GrantActivity | tee build/initial-launch.txt
+            timeout -k 5s 180s adb shell am instrument -w -e stage core com.ilubox.movimientosq9.tests/com.ilubox.movimientosq9.tests.Smoke | tee build/android-core.txt
             adb logcat -d > build/android-core-logcat.txt
             adb pull /data/user/0/com.ilubox.movimientosq9/files/qa build/qa
             grep -q 'OK ·' build/android-core.txt
-            timeout 900s adb shell am instrument -w -e stage capacity com.ilubox.movimientosq9.tests/com.ilubox.movimientosq9.tests.Smoke | tee build/android-smoke.txt
+            timeout -k 5s 900s adb shell am instrument -w -e stage capacity com.ilubox.movimientosq9.tests/com.ilubox.movimientosq9.tests.Smoke | tee build/android-smoke.txt
             adb logcat -d > build/android-logcat.txt
             adb pull /data/user/0/com.ilubox.movimientosq9/files/qa build/qa
             grep -q 'OK ·' build/android-smoke.txt
@@ -63,6 +63,7 @@ jobs:
             build/android-smoke.txt
             build/android-core.txt
             build/android-core-logcat.txt
+            build/initial-launch.txt
             build/android-logcat.txt
             build/dex/classes.dex
           retention-days: 14
