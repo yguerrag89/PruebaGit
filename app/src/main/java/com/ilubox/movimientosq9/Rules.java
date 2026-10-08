@@ -10,7 +10,15 @@ public final class Rules {
     private Rules() {}
     public static String clean(String raw) { return raw == null ? "" : raw.trim().replace('\u3000', ' ').trim(); }
     public static String barcode(String raw) {
-        String s = clean(raw).toUpperCase(Locale.ROOT).replaceAll("(?U)\\s+", "");
+        String upper = clean(raw).toUpperCase(Locale.ROOT);
+        StringBuilder compact = new StringBuilder();
+        // Android 6 no admite la bandera regex (?U). Python y Android deben
+        // eliminar también espacios Unicode y el separador NEL.
+        for (int i = 0; i < upper.length(); i++) {
+            char c = upper.charAt(i);
+            if (!Character.isWhitespace(c) && !Character.isSpaceChar(c) && c != '\u0085') compact.append(c);
+        }
+        String s = compact.toString();
         Matcher m = Pattern.compile("(.+?)U0*(\\d+)").matcher(s);
         if (!m.matches()) return s;
         String number = m.group(2).replaceFirst("^0+(?!$)", "");
