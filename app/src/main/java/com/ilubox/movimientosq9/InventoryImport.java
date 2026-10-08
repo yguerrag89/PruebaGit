@@ -13,6 +13,8 @@ import java.util.regex.*;
 public final class InventoryImport {
     private InventoryImport() {}
     private static final String[] FIELDS={"box_type","barcode","customer","origin","total","available","locked"};
+    private static final Pattern CUSTOMER_CODE=Pattern.compile("\\(([0-9]+)\\)");
+    private static final Pattern DIGITS=Pattern.compile("[0-9]+");
     private static final String[][] ALIASES={
         {"Box type No./箱类型号","Box type No.","箱类型号"},
         {"Customize Barcode/自定义箱条码","Customize Barcode","barcode","自定义箱条码"},
@@ -23,7 +25,7 @@ public final class InventoryImport {
         {"Locked Inventory/锁定库存","Locked Inventory","锁定库存"}
     };
     public static String header(String s){return Normalizer.normalize(Rules.clean(s),Normalizer.Form.NFKD).toLowerCase(Locale.ROOT).replaceAll("\\p{M}","").replaceAll("[^a-z0-9\\u4e00-\\u9fff]","");}
-    public static String customer(String s){s=Rules.clean(s);if(s.contains("|"))return "";Matcher m=Pattern.compile("\\(([0-9]+)\\)").matcher(s);return m.find()?m.group(1):s.matches("[0-9]+")?s:"";}
+    public static String customer(String s){s=Rules.clean(s);if(s.contains("|"))return "";Matcher m=CUSTOMER_CODE.matcher(s);return m.find()?m.group(1):DIGITS.matcher(s).matches()?s:"";}
     private static BigDecimal numeric(String s){try{BigDecimal n=new BigDecimal(Rules.clean(s));return n.signum()<0?null:n;}catch(Exception e){return null;}}
     public static String[] assess(String box,String client,String origin,String total,String available,String locked){
         BigDecimal t=numeric(total),a=numeric(available),b=numeric(locked),one=BigDecimal.ONE;

@@ -7,6 +7,9 @@ import java.util.regex.Pattern;
 
 /** Normalización compatible con core.inventory de Windows. Sin dependencia de UI. */
 public final class Rules {
+    private static final Pattern BOX_SUFFIX=Pattern.compile("(.+?)U0*(\\d+)");
+    private static final Pattern LEADING_ZERO=Pattern.compile("^0+(?!$)");
+    private static final Pattern LOCATION_PUNCTUATION=Pattern.compile("[^A-Z0-9]");
     private Rules() {}
     public static String clean(String raw) { return raw == null ? "" : raw.trim().replace('\u3000', ' ').trim(); }
     public static String barcode(String raw) {
@@ -19,14 +22,14 @@ public final class Rules {
             if (!Character.isWhitespace(c) && !Character.isSpaceChar(c) && c != '\u0085') compact.append(c);
         }
         String s = compact.toString();
-        Matcher m = Pattern.compile("(.+?)U0*(\\d+)").matcher(s);
+        Matcher m = BOX_SUFFIX.matcher(s);
         if (!m.matches()) return s;
-        String number = m.group(2).replaceFirst("^0+(?!$)", "");
+        String number = LEADING_ZERO.matcher(m.group(2)).replaceFirst("");
         while (number.length() < 3) number = "0" + number;
         return m.group(1) + "U" + number;
     }
     public static String locationKey(String raw) {
-        return Normalizer.normalize(clean(raw), Normalizer.Form.NFKC).toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        return LOCATION_PUNCTUATION.matcher(Normalizer.normalize(clean(raw), Normalizer.Form.NFKC).toUpperCase(Locale.ROOT)).replaceAll("");
     }
     public static boolean looksLocation(String raw) {
         return clean(raw).toUpperCase(Locale.ROOT).matches("(?:2[AB]|MC|MD)[?_'\\-].*") && !barcode(raw).matches(".*U\\d+$");
