@@ -45,7 +45,7 @@ public final class Xlsx {
         try(ZipFile z=new ZipFile(file)){
             long bytes=0;int entries=0;Set<String> names=new HashSet<>();Enumeration<? extends ZipEntry> it=z.entries();
             while(it.hasMoreElements()){ZipEntry e=it.nextElement();if(!names.add(e.getName())||++entries>10000||e.getSize()<0)throw new IOException("Estructura Excel inválida.");bytes+=e.getSize();if(bytes>1500000000L)throw new IOException("El Excel es demasiado grande al descomprimir.");}
-            strings=SQLiteDatabase.openOrCreateDatabase(temp,null);strings.execSQL("PRAGMA journal_mode=OFF");strings.execSQL("CREATE TABLE strings(id INTEGER PRIMARY KEY,value TEXT)");
+            strings=SQLiteDatabase.openOrCreateDatabase(temp,null);try(Cursor mode=strings.rawQuery("PRAGMA journal_mode=OFF",null)){mode.moveToFirst();}strings.execSQL("CREATE TABLE strings(id INTEGER PRIMARY KEY,value TEXT)");
             ZipEntry ss=z.getEntry("xl/sharedStrings.xml");
             if(ss!=null){progress.report("Leyendo textos del Excel…");strings.beginTransaction();
                 try(SQLiteStatement insert=strings.compileStatement("INSERT INTO strings VALUES(?,?)");InputStream in=z.getInputStream(ss)){

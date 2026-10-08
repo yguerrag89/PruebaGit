@@ -42,7 +42,8 @@ public final class InventoryImport {
         if(file.exists())throw new IOException("La carpeta de carga ya contiene inventario.");
         SQLiteDatabase db=SQLiteDatabase.openOrCreateDatabase(file,null);final int[] count={0};final Map<String,String> mapping=new LinkedHashMap<>();final boolean[] headers={false};
         try{
-            db.execSQL("PRAGMA journal_mode=OFF");db.execSQL("CREATE TABLE info(key TEXT PRIMARY KEY,value TEXT)");db.execSQL("CREATE TABLE inventory(barcode TEXT,barcode_norm TEXT,box_type TEXT,customer_code TEXT,origin TEXT,origin_key TEXT,total TEXT,available TEXT,locked TEXT,status TEXT,reason TEXT)");db.execSQL("CREATE TABLE locations(origin TEXT,origin_key TEXT)");db.execSQL("CREATE TABLE guards(identity_key TEXT PRIMARY KEY,reason TEXT)");
+            try(android.database.Cursor mode=db.rawQuery("PRAGMA journal_mode=OFF",null)){mode.moveToFirst();}
+            db.execSQL("CREATE TABLE info(key TEXT PRIMARY KEY,value TEXT)");db.execSQL("CREATE TABLE inventory(barcode TEXT,barcode_norm TEXT,box_type TEXT,customer_code TEXT,origin TEXT,origin_key TEXT,total TEXT,available TEXT,locked TEXT,status TEXT,reason TEXT)");db.execSQL("CREATE TABLE locations(origin TEXT,origin_key TEXT)");db.execSQL("CREATE TABLE guards(identity_key TEXT PRIMARY KEY,reason TEXT)");
             db.beginTransaction();
             try(SQLiteStatement insert=db.compileStatement("INSERT INTO inventory VALUES(?,?,?,?,?,?,?,?,?,?,?)")){
                 Xlsx.read(xlsx,strings,new Xlsx.Rows(){

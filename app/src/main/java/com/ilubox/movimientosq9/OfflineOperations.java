@@ -65,6 +65,15 @@ public final class OfflineOperations {
         File[] files=source.listFiles();if(files==null)throw new IOException("No hay archivos para guardar.");Arrays.sort(files,(a,b)->a.getName().compareTo(b.getName()));
         try(FileOutputStream f=new FileOutputStream(target);ZipOutputStream z=new ZipOutputStream(f)){for(File file:files){if(!file.isFile())continue;z.putNextEntry(new ZipEntry(file.getName()));try(InputStream in=new FileInputStream(file)){NativeClient.copy(in,z,1024L*1024*1024);}z.closeEntry();}z.finish();z.flush();f.getFD().sync();}
     }
+    public static void exportDocuments(File packet,android.content.ContentResolver resolver,android.net.Uri tree,NativeClient.Progress progress) throws Exception {
+        android.net.Uri root=android.provider.DocumentsContract.buildDocumentUriUsingTree(tree,android.provider.DocumentsContract.getTreeDocumentId(tree));
+        android.net.Uri folder=android.provider.DocumentsContract.createDocument(resolver,root,android.provider.DocumentsContract.Document.MIME_TYPE_DIR,packet.getName().replace(".zip",""));
+        if(folder==null)throw new IOException("No se puede crear una carpeta allí. El ZIP completo se conserva en la PDA.");
+        try(ZipFile z=new ZipFile(packet)){Enumeration<? extends ZipEntry> entries=z.entries();while(entries.hasMoreElements()){ZipEntry e=entries.nextElement();String name=e.getName();if(e.isDirectory()||name.contains("/")||name.contains("\\"))throw new IOException("El paquete contiene un nombre de archivo inválido.");String mime=name.endsWith(".xlsx")?"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":name.endsWith(".json")?"application/json":"text/plain";
+            progress.report("Guardando "+name);android.net.Uri document=android.provider.DocumentsContract.createDocument(resolver,folder,mime,name);if(document==null)throw new IOException("No se pudo crear "+name+". Se conserva el ZIP completo en la PDA.");
+            try(InputStream in=z.getInputStream(e);OutputStream out=resolver.openOutputStream(document)){if(out==null)throw new IOException("No se puede escribir en la carpeta elegida.");NativeClient.copy(in,out,1024L*1024*1024);out.flush();if(out instanceof FileOutputStream)((FileOutputStream)out).getFD().sync();}
+        }}
+    }
     public static File backup(LocalStore s,JSONObject profile,File output) throws Exception {
         synchronized(s){
             File stage=new File(output.getParent(),"backup_"+UUID.randomUUID());stage.mkdirs();try{
