@@ -73,7 +73,7 @@ public final class Smoke extends Instrumentation {
     }
     private void uiTest(File source) throws Exception{
         getTargetContext().getSharedPreferences("movimientos",0).edit().remove("current_operation").commit();Intent intent=new Intent(getTargetContext(),MainActivity.class);intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);Activity a=startActivitySync(intent);waitForIdleSync();screenshot("01_setup.png");
-        Button load=findButton(a.getWindow().getDecorView(),"Cargar inventario Excel");check(load!=null,"Carga directa en pantalla inicial");runOnMainSync(load::performClick);waitForIdleSync();Thread.sleep(300);screenshot("02_selector_archivos.png");sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);Thread.sleep(300);
+        Button load=findButton(a.getWindow().getDecorView(),"Cargar inventario Excel");check(load!=null,"Carga directa en pantalla inicial");runOnMainSync(load::performClick);waitForIdleSync();Thread.sleep(300);screenshot("02_selector_archivos.png");long keyTime=SystemClock.uptimeMillis();check(getUiAutomation().injectInputEvent(new KeyEvent(keyTime,keyTime,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_BACK,0),true),"Regreso del selector Android");getUiAutomation().injectInputEvent(new KeyEvent(keyTime,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,KeyEvent.KEYCODE_BACK,0),true);Thread.sleep(300);
         runOnMainSync(()->((MainActivity)a).onActivityResult(11,Activity.RESULT_OK,new Intent().setData(Uri.parse("content://com.ilubox.movimientosq9.tests.inventory/inventory_shared.xlsx"))));waitForIdleSync();Thread.sleep(300);
         EditText cut=findInput(a.getWindow().getDecorView(),"Corte WMS: aaaa-mm-dd hh:mm");
         // Los diálogos tienen su propio árbol; se usan UiAutomation y teclas sobre el campo con foco.
